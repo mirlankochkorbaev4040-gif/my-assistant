@@ -1,3 +1,4 @@
+Content is user-generated and unverified.
 2
 /* eslint-disable */
 import { useState, useRef, useEffect } from "react";
@@ -283,12 +284,7 @@ function AdminPanel({ users, setUsers, onLogout }) {
             <div style={{marginBottom:16}}>
               <div style={{display:"flex",gap:8}}>
                 <Field placeholder="Придумайте пароль" value={form.password} onChange={e=>setForm({...form,password:e.target.value})}/>
-                <button onClick={()=>setForm({...form,password:Math.random().toString(36).slice(2,10)})} <button
-  onClick={() => setForm({...form, password: Math.random().toString(36).slice(2,10)})}
-  style={{ ...sf, background: "gray" }}
->
-  Сгенерировать
-</button>,border:"none",borderRadius:12,padding:"0 14px",cursor:"pointer",fontSize:13,color:C.blue,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>Авто</button>
+                <button onClick={()=>setForm({...form,password:Math.random().toString(36).slice(2,10)})} style={{...sf,background:C.gray1,border:"none",borderRadius:12,padding:"0 14px",cursor:"pointer",fontSize:13,color:C.blue,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>Авто</button>
               </div>
             </div>
 
@@ -675,3 +671,4 @@ function CalendarTab({ managerId, role, events, onAdd, onDelete }) {
     </div>
   );
 }
+
