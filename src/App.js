@@ -1,4 +1,3 @@
-Content is user-generated and unverified.
 2
 /* eslint-disable */
 import { useState, useRef, useEffect } from "react";
