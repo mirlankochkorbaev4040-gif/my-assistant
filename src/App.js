@@ -274,8 +274,13 @@ function AdminPanel({ users, setUsers, onLogout }) {
             </div>
 
             <Lbl text="Имя и фамилия"/>
-            <div style={{marginBottom:12}}><Field placeholder="Например: Иван Петров" value={form.name} onChange={e=>setForm({...form,name:e.target.value,initials:mkInitials(e.target.value)}}/></div>
-
+            <div style={{ marginBottom: 12 }}>
+  <Field
+    placeholder="Например: Иван Петров"
+    value={form.name}
+    onChange={e => setForm({ ...form, name: e.target.value })}
+  />
+</div>
             <Lbl text="Логин (для входа)"/>
             <div style={{marginBottom:12}}><Field placeholder="Например: ivan" value={form.login} onChange={e=>setForm({...form,login:e.target.value.toLowerCase().replace(/\s/g,"")})} /></div>
 
