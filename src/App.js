@@ -1,6 +1,5 @@
 /* eslint-disable */
 import { useState, useRef, useEffect } from "react";
-import { useState } from "react";
 
 // ── ЦВЕТА И ШРИФТ ─────────────────────────────────────────────────────────────
 const B = "#007AFF", G = "#34C759", R = "#FF3B30", O = "#FF9500";
