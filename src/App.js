@@ -1,4 +1,5 @@
 /* eslint-disable */
+import { useState, useRef, useEffect } from "react";
 import { useState } from "react";
 
 // ── ЦВЕТА И ШРИФТ ─────────────────────────────────────────────────────────────
@@ -1603,9 +1604,8 @@ export default function App() {
   // ── Не залогинен — показываем экран входа ────────────────────────────────
   if (!me) {
     return (
-      <div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#1C1C1E"}}>
-        <div style={{width:390,height:844,borderRadius:52,overflow:"hidden",
-          border:"10px solid #3A3A3C",boxShadow:"0 40px 100px rgba(0,0,0,0.6)"}}>
+      <div style={{height:"100vh",background:BG}}>
+        <div style={{maxWidth:500,margin:"0 auto",height:"100%"}}>
           <LoginScreen onLogin={doLogin} users={users}/>
         </div>
       </div>
@@ -1634,18 +1634,13 @@ export default function App() {
     : [{k:"home",i:"🏠",l:"Главная"},{k:"tasks",i:"📋",l:"Задачи"},{k:"chat",i:"💬",l:"Чат"}];
 
   return (
-    <div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#1C1C1E"}}>
-      <div style={{width:390,height:844,borderRadius:52,overflow:"hidden",
-        border:"10px solid #3A3A3C",boxShadow:"0 40px 100px rgba(0,0,0,0.6)",
-        display:"flex",flexDirection:"column",background:BG,position:"relative"}}>
-
-        {/* Нотч */}
-        <div style={{position:"absolute",top:0,left:"50%",transform:"translateX(-50%)",
-          width:130,height:28,background:"#3A3A3C",borderRadius:"0 0 18px 18px",zIndex:30}}/>
+    <div style={{height:"100vh",display:"flex",flexDirection:"column",background:BG}}>
+      <div style={{display:"flex",flexDirection:"column",height:"100%",maxWidth:600,
+        margin:"0 auto",width:"100%",position:"relative"}}>
 
         {/* Хэдер */}
-        <div style={{background:"rgba(255,255,255,0.94)",backdropFilter:"blur(20px)",
-          borderBottom:`0.5px solid ${SEP}`,padding:"38px 18px 12px",
+        <div style={{background:"rgba(255,255,255,0.97)",backdropFilter:"blur(20px)",
+          borderBottom:`0.5px solid ${SEP}`,padding:"14px 18px 12px",
           display:"flex",alignItems:"center",gap:10,flexShrink:0,zIndex:20}}>
           <div style={{flex:1}}>
             <div style={{...sf,fontSize:17,fontWeight:700,letterSpacing:-0.3}}>
