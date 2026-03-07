@@ -1,5 +1,70 @@
 /* eslint-disable */
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+
+// ── SUPABASE через fetch (без библиотеки) ─────────────────────────────────────
+const SUPA_URL = "https://hngwpbfgaiuwnxhzxdxp.supabase.co";
+const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhuZ3dwYmZnYWl1d254aHp4ZHhwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI4NjgzNDQsImV4cCI6MjA4ODQ0NDM0NH0.YTAb-CjVIAeBMaoYzL1jrB_xZ7zdV6EMd-iGUMCohGo";
+
+const headers = {
+  "Content-Type": "application/json",
+  "apikey": SUPA_KEY,
+  "Authorization": `Bearer ${SUPA_KEY}`,
+  "Prefer": "return=representation",
+};
+
+const db = {
+  async select(table) {
+    const r = await fetch(`${SUPA_URL}/rest/v1/${table}?select=*`, { headers });
+    if (!r.ok) throw new Error(await r.text());
+    return r.json();
+  },
+  async upsert(table, row) {
+    const r = await fetch(`${SUPA_URL}/rest/v1/${table}`, {
+      method: "POST",
+      headers: { ...headers, "Prefer": "resolution=merge-duplicates,return=representation" },
+      body: JSON.stringify(row),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    return r.json();
+  },
+  async delete(table, id) {
+    const r = await fetch(`${SUPA_URL}/rest/v1/${table}?id=eq.${id}`, {
+      method: "DELETE", headers,
+    });
+    if (!r.ok) throw new Error(await r.text());
+  },
+};
+
+// helpers: db row → app object
+function rowToUser(r) {
+  return {
+    id: r.id, role: r.role, name: r.name, initials: r.initials,
+    color: r.color, login: r.login, pw: r.pw,
+    clients: r.clients || [],
+    astId: r.ast_id || null,
+    subDays: r.sub_days ?? 30,
+    info: r.info || "", about: r.about || "",
+    likes: r.likes || "", dislikes: r.dislikes || "",
+    accesses: r.accesses || [], files: r.files || [],
+    active: r.active !== false,
+  };
+}
+function rowToTask(r) {
+  return {
+    id: r.id, title: r.title, desc: r.description || "",
+    deadline: r.deadline, priority: r.priority || "medium",
+    er: r.er || "", status: r.status || "new",
+    rating: r.rating || null, rc: r.rc || null,
+    saved: r.saved || null, result: r.result || "",
+    files: r.files || [],
+  };
+}
+function rowToMsg(r) {
+  return { id: r.id, from: r.from_role, text: r.text, time: r.time, files: r.files || [] };
+}
+function rowToEvent(r) {
+  return { id: r.id, date: r.date, time: r.time, title: r.title, type: r.type, by: r.by_role };
+}
 
 // ── ЦВЕТА И ШРИФТ ─────────────────────────────────────────────────────────────
 const B = "#007AFF", G = "#34C759", R = "#FF3B30", O = "#FF9500";
@@ -11,82 +76,7 @@ const MONTHS=["Январь","Февраль","Март","Апрель","Май"
 const WD=["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
 const fmtMin = m => m >= 60 ? `${Math.floor(m/60)} ч ${m%60 ? m%60+" мин":""}` : `${m} мин`;
 
-// ── ДАННЫЕ ────────────────────────────────────────────────────────────────────
-const USERS = [
-  { id:"admin1", role:"admin",     name:"Администратор",    initials:"AD", color:R,        login:"admin",    pw:"admin123" },
-  { id:"ast1",   role:"assistant", name:"Мария Кузнецова",  initials:"МК", color:B,        login:"maria",    pw:"maria123", clients:["mgr1","mgr2","mgr3"] },
-  { id:"ast2",   role:"assistant", name:"Иван Смирнов",     initials:"ИС", color:"#AF52DE",login:"ivan",     pw:"ivan123",  clients:["mgr4"] },
-  { id:"mgr1",   role:"manager",   name:"Алексей Морозов",  initials:"АМ", color:B,        login:"alex",     pw:"alex123",  astId:"ast1", subDays:28,
-    info:"CEO · ООО Горизонт",
-    about:"Предпочитает краткие отчёты. Рабочее время 9:00–18:00. Срочные вопросы — только WhatsApp.",
-    likes:"Быстрое выполнение, инициативность, чёткие отчёты",
-    dislikes:"Опоздания, лишние звонки, размытые ответы",
-    accesses:[{icon:"📧",label:"Gmail",val:"alex@gorizo.ru / G@2024!"},{icon:"💼",label:"CRM",val:"alex_m / CRM#567"}],
-    files:[{name:"Устав.pdf",size:"2.4 МБ",icon:"📄"},{name:"Реквизиты.docx",size:"180 КБ",icon:"📝"}]
-  },
-  { id:"mgr2",   role:"manager",   name:"Светлана Петрова", initials:"СП", color:G,        login:"svetlana", pw:"svet123",  astId:"ast1", subDays:14,
-    info:"COO · Альфа Групп",
-    about:"Любит детальные отчёты. Созвоны только по записи. Telegram предпочтительнее.",
-    likes:"Детализация, пунктуальность", dislikes:"Неожиданные звонки",
-    accesses:[{icon:"📧",label:"Email",val:"s.petrova@alfa.ru"}], files:[]
-  },
-  { id:"mgr3",   role:"manager",   name:"Дмитрий Волков",   initials:"ДВ", color:O,        login:"dmitry",   pw:"dima123",  astId:"ast1", subDays:7,
-    info:"Директор · Волна Медиа",
-    about:"Работает до 21:00. Любит голосовые сообщения. Оперативно в WhatsApp.",
-    likes:"Скорость, краткость", dislikes:"Длинные письма",
-    accesses:[], files:[{name:"Бриф.pdf",size:"1.1 МБ",icon:"📄"}]
-  },
-  { id:"mgr4",   role:"manager",   name:"Анна Белова",      initials:"АБ", color:"#FF2D55",login:"anna",     pw:"anna123",  astId:"ast2", subDays:21,
-    info:"HR-директор · Старт",
-    about:"Рабочее время 10:00–19:00.", likes:"Точность", dislikes:"Опоздания", accesses:[], files:[]
-  },
-];
-
-const INIT_TASKS = {
-  mgr1:[
-    {id:1,title:"Найти поставщика упаковки",   desc:"Минимум 3 предложения с ценами", deadline:"2026-03-02",priority:"high",  er:"Таблица сравнения",     status:"done",       rating:5,rc:"Отлично!",  saved:90,  files:[]},
-    {id:2,title:"Подготовить КП для Горизонт", desc:"КП для ООО Горизонт",             deadline:"2026-03-05",priority:"high",  er:"Готовый PDF",           status:"in_progress",rating:null,rc:null,      saved:null,files:[]},
-    {id:3,title:"Записать машину на техосмотр",desc:"Audi A6, А123ВС, любая СТО",      deadline:"2026-03-11",priority:"low",   er:"Подтверждение записи",  status:"new",        rating:null,rc:null,      saved:null,files:[]},
-  ],
-  mgr2:[
-    {id:4,title:"Анализ конкурентов",          desc:"5 конкурентов по ценам",          deadline:"2026-03-08",priority:"medium",er:"Отчёт Google Docs",     status:"problem",    rating:null,rc:null,      saved:null,files:[]},
-    {id:5,title:"Забронировать отель Москва",  desc:"5–7 апреля, центр, до 8000₽/ночь",deadline:"2026-03-20",priority:"medium",er:"Подтверждение брони",  status:"done",       rating:4,rc:"Хорошо!",  saved:35,  files:[]},
-  ],
-  mgr3:[
-    {id:6,title:"Подготовить презентацию",     desc:"15 слайдов для инвесторов",       deadline:"2026-03-10",priority:"high",  er:"PowerPoint файл",       status:"in_progress",rating:null,rc:null,      saved:null,files:[]},
-  ],
-  mgr4:[
-    {id:7,title:"Собрать резюме кандидатов",   desc:"На позицию Middle Developer",     deadline:"2026-03-12",priority:"high",  er:"10+ резюме в папке",    status:"new",        rating:null,rc:null,      saved:null,files:[]},
-  ],
-};
-
-const INIT_MSGS = {
-  mgr1:[
-    {id:1,from:"manager",  text:"Привет! Когда будет КП?",          time:"09:15",files:[]},
-    {id:2,from:"assistant",text:"Сегодня к 17:00 пришлю!",          time:"09:18",files:[]},
-    {id:3,from:"manager",  text:"Отлично, жду 👍",                  time:"09:20",files:[]},
-  ],
-  mgr2:[
-    {id:1,from:"assistant",text:"Начала работу над анализом.",       time:"10:00",files:[]},
-    {id:2,from:"manager",  text:"Хорошо. Нужно до пятницы.",         time:"10:15",files:[]},
-  ],
-  mgr3:[
-    {id:1,from:"manager",  text:"Презентация готова?",               time:"11:30",files:[]},
-    {id:2,from:"assistant",text:"8 из 15 слайдов готово.",           time:"11:35",files:[]},
-  ],
-  mgr4:[],
-};
-
-const INIT_EVENTS = {
-  mgr1:[
-    {id:1,date:"2026-03-10",time:"10:00",title:"Встреча с инвесторами",type:"meeting", by:"manager"},
-    {id:2,date:"2026-03-12",time:"14:00",title:"Звонок с поставщиком", type:"call",    by:"assistant"},
-    {id:3,date:"2026-03-07",time:"11:00",title:"Встреча с командой",   type:"meeting", by:"assistant"},
-  ],
-  mgr2:[{id:1,date:"2026-03-09",time:"15:00",title:"Созвон по анализу",     type:"call",    by:"assistant"}],
-  mgr3:[{id:1,date:"2026-03-10",time:"09:00",title:"Дедлайн — презентация", type:"deadline",by:"manager"}],
-  mgr4:[],
-};
+// данные берутся из Supabase
 
 const EVT={meeting:{l:"Встреча",i:"🤝",c:B},call:{l:"Звонок",i:"📞",c:G},deadline:{l:"Дедлайн",i:"⏰",c:R},reminder:{l:"Напоминание",i:"🔔",c:O}};
 const PR ={high:{l:"Высокий",c:R},medium:{l:"Средний",c:O},low:{l:"Низкий",c:G}};
@@ -1573,23 +1563,194 @@ function AdminPanel({users, setUsers, tasks}) {
   );
 }
 
+
 // ── ГЛАВНОЕ ПРИЛОЖЕНИЕ ────────────────────────────────────────────────────────
 export default function App() {
-  const [users,  setUsersState] = useState(USERS);
-  const [tasks,  setTasks]      = useState(INIT_TASKS);
-  const [msgs,   setMsgs]       = useState(INIT_MSGS);
-  const [events, setEvents]     = useState(INIT_EVENTS);
-  const [me,           setMe]          = useState(null);
-  const [tab,          setTab]         = useState("home");
-  const [curMgr,       setCurMgr]      = useState(null);
-  const [chatMgr,      setChatMgr]     = useState(null);
-  const [acknowledged, setAcknowledged]= useState({});
-  // unreadMsgs: {mgrId: true} — есть непрочитанные от клиента
-  // newTasks:   {mgrId: count} — новые задачи ожидают ассистента
-  const [unreadMsgs,   setUnreadMsgs]  = useState({});
-  const [newTasksNotif,setNewTasksNotif]= useState({mgr1:1, mgr3:1}); // демо: у mgr1 и mgr3 есть новые
+  const [users,        setUsersState]   = useState([]);
+  const [tasks,        setTasksState]   = useState({});
+  const [msgs,         setMsgsState]    = useState({});
+  const [events,       setEventsState]  = useState({});
+  const [me,           setMe]           = useState(null);
+  const [tab,          setTab]          = useState("home");
+  const [curMgr,       setCurMgr]       = useState(null);
+  const [chatMgr,      setChatMgr]      = useState(null);
+  const [acknowledged, setAcknowledged] = useState({});
+  const [unreadMsgs,   setUnreadMsgs]   = useState({});
+  const [newTasksNotif,setNewTasksNotif]= useState({});
+  const [loading,      setLoading]      = useState(true);
+  const [error,        setError]        = useState(null);
 
-  const setUsers = fn => setUsersState(p => fn(p));
+  // ── Загрузка всех данных из Supabase ──────────────────────────────────────
+  const loadAll = useCallback(async () => {
+    try {
+      const [uData, tData, mData, eData] = await Promise.all([
+        db.select("users"),
+        db.select("tasks"),
+        db.select("messages"),
+        db.select("events"),
+      ]);
+
+      setUsersState(uData.map(rowToUser));
+
+      const tasksMap = {};
+      tData.forEach(r => {
+        if (!tasksMap[r.mgr_id]) tasksMap[r.mgr_id] = [];
+        tasksMap[r.mgr_id].push(rowToTask(r));
+      });
+      setTasksState(tasksMap);
+
+      const msgsMap = {};
+      mData.forEach(r => {
+        if (!msgsMap[r.mgr_id]) msgsMap[r.mgr_id] = [];
+        msgsMap[r.mgr_id].push(rowToMsg(r));
+      });
+      setMsgsState(msgsMap);
+
+      const evtsMap = {};
+      eData.forEach(r => {
+        if (!evtsMap[r.mgr_id]) evtsMap[r.mgr_id] = [];
+        evtsMap[r.mgr_id].push(rowToEvent(r));
+      });
+      setEventsState(evtsMap);
+    } catch (e) {
+      console.error("Ошибка загрузки:", e);
+      setError("Не удалось подключиться к базе данных");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadAll(); }, [loadAll]);
+
+  // ── Polling — обновляем данные каждые 5 секунд ────────────────────────────
+  useEffect(() => {
+    const interval = setInterval(() => { if (me) loadAll(); }, 5000);
+    return () => clearInterval(interval);
+  }, [me, loadAll]);
+
+  // ── Сохранение пользователя в Supabase ────────────────────────────────────
+  async function saveUserToDb(u) {
+    try {
+      await db.upsert("users", {
+        id: u.id, role: u.role, name: u.name, initials: u.initials,
+        color: u.color, login: u.login, pw: u.pw,
+        clients: u.clients || [],
+        ast_id: u.astId || null,
+        sub_days: u.subDays ?? 30,
+        info: u.info || "", about: u.about || "",
+        likes: u.likes || "", dislikes: u.dislikes || "",
+        accesses: u.accesses || [], files: u.files || [],
+        active: u.active !== false,
+      });
+      loadAll();
+    } catch(e) { console.error("Ошибка сохранения пользователя:", e); }
+  }
+
+  async function deleteUserFromDb(id) {
+    try { await db.delete("users", id); loadAll(); }
+    catch(e) { console.error(e); }
+  }
+
+  // ── Обёртка setUsers — сохраняет изменения в Supabase ────────────────────
+  const setUsers = fn => {
+    setUsersState(prev => {
+      const next = fn(prev);
+      // находим что изменилось и сохраняем
+      next.forEach(u => {
+        const old = prev.find(p => p.id === u.id);
+        if (JSON.stringify(old) !== JSON.stringify(u)) saveUserToDb(u);
+      });
+      return next;
+    });
+  };
+
+  // ── Сохранение задачи ─────────────────────────────────────────────────────
+  async function saveTaskToDb(mgrId, task) {
+    try {
+      await db.upsert("tasks", {
+        id: String(task.id), mgr_id: mgrId,
+        title: task.title, description: task.desc || "",
+        deadline: task.deadline, priority: task.priority || "medium",
+        er: task.er || "", status: task.status || "new",
+        rating: task.rating || null, rc: task.rc || null,
+        saved: task.saved || null, result: task.result || "",
+        files: task.files || [],
+      });
+    } catch(e) { console.error("Ошибка сохранения задачи:", e); }
+  }
+
+  const setTasks = fn => {
+    setTasksState(prev => {
+      const next = fn(prev);
+      // сохраняем изменённые задачи
+      Object.entries(next).forEach(([mgrId, tList]) => {
+        tList.forEach(t => {
+          const old = (prev[mgrId] || []).find(p => p.id === t.id);
+          if (JSON.stringify(old) !== JSON.stringify(t)) saveTaskToDb(mgrId, t);
+        });
+      });
+      return next;
+    });
+  };
+
+  // ── Сохранение сообщения ──────────────────────────────────────────────────
+  async function saveMsgToDb(mgrId, msg) {
+    try {
+      await db.upsert("messages", {
+        id: String(msg.id), mgr_id: mgrId,
+        from_role: msg.from, text: msg.text,
+        time: msg.time, files: msg.files || [],
+      });
+      loadAll();
+    } catch(e) { console.error("Ошибка сохранения сообщения:", e); }
+  }
+
+  const setMsgs = fn => {
+    setMsgsState(prev => {
+      const next = fn(prev);
+      Object.entries(next).forEach(([mgrId, mList]) => {
+        mList.forEach(m => {
+          const old = (prev[mgrId] || []).find(p => p.id === m.id);
+          if (!old) saveMsgToDb(mgrId, m);
+        });
+      });
+      return next;
+    });
+  };
+
+  // ── Сохранение события ────────────────────────────────────────────────────
+  async function saveEventToDb(mgrId, ev) {
+    try {
+      await db.upsert("events", {
+        id: String(ev.id), mgr_id: mgrId,
+        date: ev.date, time: ev.time,
+        title: ev.title, type: ev.type, by_role: ev.by,
+      });
+      loadAll();
+    } catch(e) { console.error("Ошибка сохранения события:", e); }
+  }
+
+  async function deleteEventFromDb(id) {
+    try { await db.delete("events", id); loadAll(); }
+    catch(e) { console.error(e); }
+  }
+
+  const setEvents = fn => {
+    setEventsState(prev => {
+      const next = fn(prev);
+      Object.entries(next).forEach(([mgrId, eList]) => {
+        eList.forEach(e => {
+          const old = (prev[mgrId] || []).find(p => p.id === e.id);
+          if (!old) saveEventToDb(mgrId, e);
+        });
+        // удалённые события
+        (prev[mgrId] || []).forEach(e => {
+          if (!eList.find(n => n.id === e.id)) deleteEventFromDb(e.id);
+        });
+      });
+      return next;
+    });
+  };
 
   function doLogin(u) {
     setMe(u); setTab("home");
@@ -1599,6 +1760,35 @@ export default function App() {
     }
   }
   function doLogout() { setMe(null); }
+
+  // ── Экран загрузки ────────────────────────────────────────────────────────
+  if (loading) {
+    return (
+      <div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:BG}}>
+        <div style={{textAlign:"center"}}>
+          <div style={{fontSize:48,marginBottom:16}}>✦</div>
+          <div style={{...sf,fontSize:18,fontWeight:700,marginBottom:8}}>Мой Ассистент</div>
+          <div style={{...sf,fontSize:14,color:g4}}>Загрузка данных…</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:BG,padding:24}}>
+        <div style={{textAlign:"center",background:WH,borderRadius:20,padding:32,maxWidth:400}}>
+          <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
+          <div style={{...sf,fontSize:16,fontWeight:700,marginBottom:8,color:R}}>{error}</div>
+          <button onClick={()=>{setError(null);setLoading(true);loadAll();}}
+            style={{...sf,background:B,color:"#fff",border:"none",borderRadius:14,padding:"14px 24px",
+              fontSize:15,fontWeight:600,cursor:"pointer",marginTop:8}}>
+            Попробовать снова
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // ── Не залогинен — показываем экран входа ────────────────────────────────
   if (!me) {
@@ -1616,18 +1806,19 @@ export default function App() {
   const isMgr   = me.role==="manager";
   const isAst   = me.role==="assistant";
 
-  const astClients = isAst ? users.filter(u => u.role==="manager" && (me.clients||[]).includes(u.id)) : [];
-  const activeMgrId  = isMgr ? me.id : curMgr;
-  const activeChatId = isMgr ? me.id : chatMgr;
+  // обновляем me из свежих данных
+  const freshMe = users.find(u => u.id === me.id) || me;
+
+  const astClients = isAst ? users.filter(u => u.role==="manager" && (freshMe.clients||[]).includes(u.id)) : [];
+  const activeMgrId  = isMgr ? freshMe.id : curMgr;
+  const activeChatId = isMgr ? freshMe.id : chatMgr;
   const activeMgrObj  = users.find(u => u.id===activeMgrId)  || null;
   const activeChatObj = users.find(u => u.id===activeChatId) || null;
 
-  // Для чата: у руководителя собеседник — его ассистент
-  const mgrPeer = isMgr ? users.find(u => u.id===me.astId) || null : null;
+  const mgrPeer = isMgr ? users.find(u => u.id===freshMe.astId) || null : null;
 
   const roleColor = isMgr?B : isAst?G : R;
-  const roleLabel = isMgr?`👤 ${me.name}` : isAst?`🧠 ${me.name}` : "👑 Администратор";
-  // Клиент видит 4 вкладки включая профиль, ассистент — 3
+  const roleLabel = isMgr?`👤 ${freshMe.name}` : isAst?`🧠 ${freshMe.name}` : "👑 Администратор";
   const TABS = isMgr
     ? [{k:"home",i:"🏠",l:"Главная"},{k:"tasks",i:"📋",l:"Задачи"},{k:"chat",i:"💬",l:"Чат"},{k:"profile",i:"👤",l:"Профиль"}]
     : [{k:"home",i:"🏠",l:"Главная"},{k:"tasks",i:"📋",l:"Задачи"},{k:"chat",i:"💬",l:"Чат"}];
@@ -1686,33 +1877,27 @@ export default function App() {
           {!isAdmin && tab==="home" && (
             <div style={{padding:16}}>
 
-              {/* ══ КЛИЕНТ: упрощённая главная ══ */}
               {isMgr && (() => {
-                const mgrTasks   = tasks[me.id] || [];
+                const mgrTasks   = tasks[freshMe.id] || [];
                 const totalSaved = mgrTasks.reduce((s,t)=>s+(t.saved||0),0);
                 const hrs        = Math.floor(totalSaved/60);
                 const mins       = totalSaved % 60;
                 const doneCnt    = mgrTasks.filter(t=>t.status==="done").length;
                 const activeTasks= mgrTasks.filter(t=>t.status==="in_progress"||t.status==="new");
-                const nextEvent  = (events[me.id]||[]).sort((a,b)=>a.date>b.date?1:-1)[0];
+                const nextEvent  = (events[freshMe.id]||[]).sort((a,b)=>a.date>b.date?1:-1)[0];
                 return (
                   <div>
-                    {/* ГЕРОЙ — экономия */}
                     <div style={{background:"linear-gradient(135deg,#007AFF,#0051D5)",borderRadius:22,
                       padding:"22px 20px",marginBottom:14,boxShadow:"0 8px 28px rgba(0,122,255,0.35)",
                       position:"relative",overflow:"hidden"}}>
                       <div style={{position:"absolute",top:-20,right:-20,width:100,height:100,
                         borderRadius:"50%",background:"rgba(255,255,255,0.07)"}}/>
-                      <div style={{position:"absolute",bottom:-30,right:20,width:70,height:70,
-                        borderRadius:"50%",background:"rgba(255,255,255,0.05)"}}/>
                       <div style={{...sf,fontSize:12,color:"rgba(255,255,255,0.7)",
                         fontWeight:600,textTransform:"uppercase",letterSpacing:0.6,marginBottom:6}}>
                         ⏱ Сэкономлено вашего времени
                       </div>
                       {totalSaved===0
-                        ? <div style={{...sf,fontSize:32,fontWeight:800,color:"#fff",letterSpacing:-1,marginBottom:4}}>
-                            Первые задачи…
-                          </div>
+                        ? <div style={{...sf,fontSize:32,fontWeight:800,color:"#fff",letterSpacing:-1,marginBottom:4}}>Первые задачи…</div>
                         : <div style={{marginBottom:4}}>
                             {hrs>0 && <span style={{...sf,fontSize:52,fontWeight:800,color:"#fff",letterSpacing:-2,lineHeight:1}}>{hrs}</span>}
                             {hrs>0 && <span style={{...sf,fontSize:22,color:"rgba(255,255,255,0.75)",fontWeight:600,marginRight:10}}> ч</span>}
@@ -1725,7 +1910,6 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Активные задачи — что сейчас делает ассистент */}
                     <div style={{background:WH,borderRadius:18,padding:"14px 16px",marginBottom:14,
                       boxShadow:"0 1px 8px rgba(0,0,0,0.06)"}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
@@ -1737,25 +1921,18 @@ export default function App() {
                         </button>
                       </div>
                       {activeTasks.length===0
-                        ? <div style={{...sf,fontSize:14,color:g4,textAlign:"center",padding:"12px 0"}}>
-                            Нет активных задач 🎉
-                          </div>
+                        ? <div style={{...sf,fontSize:14,color:g4,textAlign:"center",padding:"12px 0"}}>Нет активных задач 🎉</div>
                         : activeTasks.slice(0,3).map((t,i)=>{
                             const s=ST[t.status];
                             return (
                               <div key={i} style={{display:"flex",alignItems:"center",gap:10,
                                 padding:"9px 0",borderBottom:i<Math.min(activeTasks.length,3)-1?`0.5px solid ${SEP}`:"none"}}>
-                                <div style={{width:36,height:36,borderRadius:10,
-                                  background:s.bg,border:`1.5px solid ${s.bd}`,
-                                  display:"flex",alignItems:"center",justifyContent:"center",
-                                  fontSize:16,flexShrink:0}}>
-                                  {s.i}
-                                </div>
+                                <div style={{width:36,height:36,borderRadius:10,background:s.bg,
+                                  border:`1.5px solid ${s.bd}`,display:"flex",alignItems:"center",
+                                  justifyContent:"center",fontSize:16,flexShrink:0}}>{s.i}</div>
                                 <div style={{flex:1,minWidth:0}}>
-                                  <div style={{...sf,fontSize:14,fontWeight:600,
-                                    overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                                    {t.title}
-                                  </div>
+                                  <div style={{...sf,fontSize:14,fontWeight:600,overflow:"hidden",
+                                    textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.title}</div>
                                   <div style={{...sf,fontSize:11,color:g4}}>до {t.deadline}</div>
                                 </div>
                                 <div style={{...sf,fontSize:11,fontWeight:600,color:s.c,flexShrink:0}}>{s.l}</div>
@@ -1765,46 +1942,35 @@ export default function App() {
                       }
                     </div>
 
-                    {/* Ближайшее событие */}
                     {nextEvent && (() => {
                       const et = EVT[nextEvent.type]||EVT.meeting;
                       return (
                         <div style={{background:WH,borderRadius:18,padding:"14px 16px",marginBottom:14,
-                          boxShadow:"0 1px 8px rgba(0,0,0,0.06)",
-                          borderLeft:`4px solid ${et.c}`}}>
+                          boxShadow:"0 1px 8px rgba(0,0,0,0.06)",borderLeft:`4px solid ${et.c}`}}>
                           <div style={{...sf,fontSize:11,color:g4,fontWeight:600,
-                            textTransform:"uppercase",letterSpacing:0.4,marginBottom:6}}>
-                            Ближайшее событие
-                          </div>
+                            textTransform:"uppercase",letterSpacing:0.4,marginBottom:6}}>Ближайшее событие</div>
                           <div style={{display:"flex",alignItems:"center",gap:10}}>
                             <span style={{fontSize:24}}>{et.i}</span>
                             <div style={{flex:1}}>
                               <div style={{...sf,fontSize:15,fontWeight:700}}>{nextEvent.title}</div>
                               <div style={{...sf,fontSize:12,color:g4}}>{nextEvent.date} · {nextEvent.time}</div>
                             </div>
-                            <button onClick={()=>setTab("home_cal")}
-                              style={{...sf,background:`${et.c}12`,border:"none",borderRadius:10,
-                                padding:"6px 12px",cursor:"pointer",fontSize:12,color:et.c,fontWeight:600}}>
-                              Календарь
-                            </button>
                           </div>
                         </div>
                       );
                     })()}
 
-                    {/* Подписка — только если скоро истекает */}
-                    {me.subDays <= 14 && (
-                      <div style={{background:me.subDays<=7?"rgba(255,59,48,0.08)":"rgba(255,149,0,0.08)",
-                        border:`1.5px solid ${me.subDays<=7?"rgba(255,59,48,0.25)":"rgba(255,149,0,0.25)"}`,
+                    {freshMe.subDays <= 14 && (
+                      <div style={{background:freshMe.subDays<=7?"rgba(255,59,48,0.08)":"rgba(255,149,0,0.08)",
+                        border:`1.5px solid ${freshMe.subDays<=7?"rgba(255,59,48,0.25)":"rgba(255,149,0,0.25)"}`,
                         borderRadius:16,padding:"13px 16px",marginBottom:14,
                         display:"flex",alignItems:"center",gap:12}}>
-                        <span style={{fontSize:22}}>{me.subDays<=7?"⚠️":"⏰"}</span>
+                        <span style={{fontSize:22}}>{freshMe.subDays<=7?"⚠️":"⏰"}</span>
                         <div style={{flex:1}}>
-                          <div style={{...sf,fontSize:14,fontWeight:700,
-                            color:me.subDays<=7?R:O}}>
-                            {me.subDays<=7?"Подписка заканчивается!":"Подписка скоро закончится"}
+                          <div style={{...sf,fontSize:14,fontWeight:700,color:freshMe.subDays<=7?R:O}}>
+                            {freshMe.subDays<=7?"Подписка заканчивается!":"Подписка скоро закончится"}
                           </div>
-                          <div style={{...sf,fontSize:12,color:g4}}>Осталось {me.subDays} дней</div>
+                          <div style={{...sf,fontSize:12,color:g4}}>Осталось {freshMe.subDays} дней</div>
                         </div>
                       </div>
                     )}
@@ -1812,7 +1978,6 @@ export default function App() {
                 );
               })()}
 
-              {/* Отчёт недели — АССИСТЕНТ может отправить клиенту */}
               {isAst && activeMgrId && (() => {
                 const mgrTasks  = tasks[activeMgrId] || [];
                 const weekTasks = mgrTasks.filter(t=>t.status==="done").slice(-5);
@@ -1822,23 +1987,19 @@ export default function App() {
                   : null;
               })()}
 
-              {/* Календарь */}
               <div style={{background:WH,borderRadius:20,padding:16,marginBottom:14,boxShadow:"0 1px 8px rgba(0,0,0,0.06)"}}>
                 <div style={{...sf,fontSize:15,fontWeight:700,marginBottom:12}}>📅 Календарь</div>
                 {activeMgrId
-                  ? <CalendarBlock events={events} setEvents={setEvents} mgrId={activeMgrId} role={me.role}/>
+                  ? <CalendarBlock events={events} setEvents={setEvents} mgrId={activeMgrId} role={freshMe.role}/>
                   : <div style={{...sf,fontSize:14,color:g4,textAlign:"center",padding:"20px 0"}}>Выберите клиента</div>
                 }
               </div>
 
-              {/* Профиль — только для ассистента на главной */}
               {isAst && activeMgrObj && (
                 <div style={{background:WH,borderRadius:20,padding:16,boxShadow:"0 1px 8px rgba(0,0,0,0.06)"}}>
                   <div style={{...sf,fontSize:15,fontWeight:700,marginBottom:12}}>👤 Профиль руководителя</div>
                   <ProfileBlock
-                    mgr={activeMgrObj}
-                    setUsers={setUsers}
-                    canEdit={true}
+                    mgr={activeMgrObj} setUsers={setUsers} canEdit={true}
                     isNewAssistant={isAst && !acknowledged[activeMgrId]}
                     onAcknowledge={()=>setAcknowledged(p=>({...p,[activeMgrId]:true}))}
                   />
@@ -1847,22 +2008,21 @@ export default function App() {
             </div>
           )}
 
-          {/* ── ПРОФИЛЬ (только клиент) ── */}
+          {/* ── ПРОФИЛЬ (клиент) ── */}
           {!isAdmin && tab==="profile" && isMgr && (() => {
-            const mgrTasks  = tasks[me.id] || [];
+            const mgrTasks  = tasks[freshMe.id] || [];
             const totalSaved= mgrTasks.reduce((s,t)=>s+(t.saved||0),0);
             const rated     = mgrTasks.filter(t=>t.rating);
             const avgRating = rated.length?(rated.reduce((s,t)=>s+t.rating,0)/rated.length).toFixed(1):null;
             return (
               <div style={{padding:16}}>
-                {/* Метрики */}
                 <div style={{...sf,fontSize:11,color:g4,fontWeight:600,
                   textTransform:"uppercase",letterSpacing:0.4,marginBottom:10}}>📊 Статистика</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:16}}>
                   {[
-                    {v:mgrTasks.length,                    l:"задач\nпоручено",  c:B, bg:"rgba(0,122,255,0.08)", i:"📋"},
-                    {v:fmtMin(totalSaved)||"0 мин",        l:"сэкономлено",      c:G, bg:"rgba(52,199,89,0.08)", i:"⏱"},
-                    {v:avgRating?`★ ${avgRating}`:"—",     l:"средняя\nоценка",  c:O, bg:"rgba(255,149,0,0.08)", i:"⭐"},
+                    {v:mgrTasks.length, l:"задач\nпоручено", c:B, bg:"rgba(0,122,255,0.08)", i:"📋"},
+                    {v:fmtMin(totalSaved)||"0 мин", l:"сэкономлено", c:G, bg:"rgba(52,199,89,0.08)", i:"⏱"},
+                    {v:avgRating?`★ ${avgRating}`:"—", l:"средняя\nоценка", c:O, bg:"rgba(255,149,0,0.08)", i:"⭐"},
                   ].map((m,i)=>(
                     <div key={i} style={{background:m.bg,borderRadius:16,padding:"12px 6px",textAlign:"center"}}>
                       <div style={{fontSize:18,marginBottom:2}}>{m.i}</div>
@@ -1871,16 +2031,10 @@ export default function App() {
                     </div>
                   ))}
                 </div>
-                {/* Профиль */}
                 <div style={{background:WH,borderRadius:20,padding:16,boxShadow:"0 1px 8px rgba(0,0,0,0.06)"}}>
                   <div style={{...sf,fontSize:15,fontWeight:700,marginBottom:12}}>👤 Мой профиль</div>
-                  <ProfileBlock
-                    mgr={users.find(u=>u.id===me.id)}
-                    setUsers={setUsers}
-                    canEdit={false}
-                    isNewAssistant={false}
-                    onAcknowledge={null}
-                  />
+                  <ProfileBlock mgr={users.find(u=>u.id===freshMe.id)} setUsers={setUsers}
+                    canEdit={false} isNewAssistant={false} onAcknowledge={null}/>
                 </div>
               </div>
             );
@@ -1889,7 +2043,6 @@ export default function App() {
           {/* ── ЗАДАЧИ ── */}
           {!isAdmin && tab==="tasks" && (
             <div style={{padding:16}}>
-              {/* Уведомление о новой задаче (только ассистенту) */}
               {isAst && activeMgrId && (newTasksNotif[activeMgrId]||0) > 0 && (
                 <div style={{background:"linear-gradient(135deg,rgba(0,122,255,0.10),rgba(0,122,255,0.04))",
                   border:"1.5px solid rgba(0,122,255,0.25)",borderRadius:16,
@@ -1897,19 +2050,15 @@ export default function App() {
                   <div style={{width:40,height:40,borderRadius:12,background:`${B}18`,
                     display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>🔔</div>
                   <div style={{flex:1}}>
-                    <div style={{...sf,fontSize:14,fontWeight:700,color:B}}>
-                      {newTasksNotif[activeMgrId]} новая задача!
-                    </div>
-                    <div style={{...sf,fontSize:12,color:g4}}>
-                      {activeMgrObj?.name} поставил(а) новую задачу
-                    </div>
+                    <div style={{...sf,fontSize:14,fontWeight:700,color:B}}>{newTasksNotif[activeMgrId]} новая задача!</div>
+                    <div style={{...sf,fontSize:12,color:g4}}>{activeMgrObj?.name} поставил(а) новую задачу</div>
                   </div>
                   <button onClick={()=>setNewTasksNotif(p=>({...p,[activeMgrId]:0}))}
                     style={{background:"none",border:"none",cursor:"pointer",fontSize:18,color:g4}}>✕</button>
                 </div>
               )}
               {activeMgrId
-                ? <TasksBlock tasks={tasks} setTasks={setTasks} mgrId={activeMgrId} myRole={me.role}
+                ? <TasksBlock tasks={tasks} setTasks={setTasks} mgrId={activeMgrId} myRole={freshMe.role}
                     onNewTask={isMgr ? ()=>setNewTasksNotif(p=>({...p,[activeMgrId]:(p[activeMgrId]||0)+1})) : null}/>
                 : <div style={{textAlign:"center",padding:"60px 0",...sf,color:g4}}>Выберите клиента</div>
               }
@@ -1919,7 +2068,6 @@ export default function App() {
           {/* ── ЧАТ ── */}
           {!isAdmin && tab==="chat" && (
             <div style={{display:"flex",flexDirection:"column",flex:1,minHeight:0}}>
-              {/* Вкладки клиентов у ассистента в чате — с красным бейджем */}
               {isAst && astClients.length>0 && (
                 <div style={{background:WH,borderBottom:`0.5px solid ${SEP}`,display:"flex",overflowX:"auto",flexShrink:0}}>
                   {astClients.map(c=>{
@@ -1932,12 +2080,9 @@ export default function App() {
                           padding:"10px 14px",cursor:"pointer",color:chatMgr===c.id?c.color:g4,
                           fontWeight:chatMgr===c.id?700:400,fontSize:14,
                           whiteSpace:"nowrap",flexShrink:0,
-                          display:"flex",alignItems:"center",gap:5,position:"relative"}}>
+                          display:"flex",alignItems:"center",gap:5}}>
                         {c.name.split(" ")[0]}
-                        {hasUnread && (
-                          <span style={{width:8,height:8,borderRadius:"50%",background:R,flexShrink:0,
-                            boxShadow:`0 0 0 2px ${WH}`}}/>
-                        )}
+                        {hasUnread && <span style={{width:8,height:8,borderRadius:"50%",background:R,flexShrink:0}}/>}
                       </button>
                     );
                   })}
@@ -1945,13 +2090,12 @@ export default function App() {
               )}
               {isMgr && mgrPeer && (
                 <ChatBlock messages={msgs} setMessages={setMsgs}
-                  mgrId={me.id} myRole="manager" peer={mgrPeer}
-                  onSend={()=>setUnreadMsgs(p=>({...p,[me.id]:true}))}/>
+                  mgrId={freshMe.id} myRole="manager" peer={mgrPeer}
+                  onSend={()=>setUnreadMsgs(p=>({...p,[freshMe.id]:true}))}/>
               )}
               {isAst && activeChatObj && (
                 <ChatBlock messages={msgs} setMessages={setMsgs}
-                  mgrId={activeChatId} myRole="assistant" peer={activeChatObj}
-                  onSend={null}/>
+                  mgrId={activeChatId} myRole="assistant" peer={activeChatObj} onSend={null}/>
               )}
               {isAst && !activeChatObj && (
                 <div style={{textAlign:"center",padding:"60px 0",...sf,color:g4}}>Выберите клиента</div>
@@ -1962,12 +2106,10 @@ export default function App() {
 
         {/* Нижняя навигация */}
         {!isAdmin && (
-          <div style={{background:"rgba(255,255,255,0.94)",backdropFilter:"blur(20px)",
+          <div style={{background:"rgba(255,255,255,0.97)",backdropFilter:"blur(20px)",
             borderTop:`0.5px solid ${SEP}`,display:"flex",flexShrink:0,paddingBottom:8}}>
             {TABS.map(t=>{
-              // Красная точка на чате — есть непрочитанные от клиента (только у ассистента)
               const hasUnreadChat = isAst && t.k==="chat" && Object.values(unreadMsgs).some(v=>v);
-              // Красная точка на задачах — есть новые задачи (только у ассистента)
               const hasNewTask    = isAst && t.k==="tasks" && Object.values(newTasksNotif).some(v=>v>0);
               return (
                 <button key={t.k} onClick={()=>setTab(t.k)}
