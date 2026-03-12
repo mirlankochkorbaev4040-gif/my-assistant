@@ -695,7 +695,7 @@ function AiCheck({task, onDone}) {
     if (aiPlan) return;
     setPlanLoading(true);
     try {
-      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      const resp = await fetch("/api/claude", {
         method: "POST",
         headers: {"Content-Type":"application/json"},
         body: JSON.stringify({
@@ -724,7 +724,7 @@ function AiCheck({task, onDone}) {
     if (!result.trim()) return;
     setChecking(true); setReview(null);
     try {
-      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      const resp = await fetch("/api/claude", {
         method: "POST",
         headers: {"Content-Type":"application/json"},
         body: JSON.stringify({
