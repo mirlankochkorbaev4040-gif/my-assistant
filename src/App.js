@@ -43,6 +43,7 @@ function rowToUser(r) {
     clients: r.clients || [],
     astId: r.ast_id || null,
     subDays: r.sub_days ?? 30,
+    ratePerClient: r.rate_per_client ?? 90000,
     info: r.info || "", about: r.about || "",
     likes: r.likes || "", dislikes: r.dislikes || "",
     accesses: r.accesses || [], files: r.files || [],
@@ -56,6 +57,8 @@ function rowToTask(r) {
     er: r.er || "", status: r.status || "new",
     rating: r.rating || null, rc: r.rc || null,
     saved: r.saved || null, result: r.result || "",
+    helpComment: r.help_comment || "",
+    mgrReply: r.mgr_reply || "",
     files: r.files || [],
   };
 }
@@ -677,7 +680,333 @@ function ChatBlock({messages, setMessages, mgrId, myRole, peer, onSend}) {
   );
 }
 
+// ── AI ПРОВЕРКА ЗАДАЧИ ────────────────────────────────────────────────────────
+function AiCheck({task, onDone}) {
+  const [result,   setResult]   = useState(task.result||"");
+  const [checking, setChecking] = useState(false);
+  const [review,   setReview]   = useState(null);
+  const [aiPlan,   setAiPlan]   = useState(null);
+  const [planLoading, setPlanLoading] = useState(false);
+
+  // Синхронизируем result с task.result
+  useState(() => { setResult(task.result||""); }, [task.result]);
+
+  async function loadPlan() {
+    if (aiPlan) return;
+    setPlanLoading(true);
+    try {
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
+          messages: [{role:"user", content:
+            `Ты опытный бизнес-ассистент. Составь краткий план выполнения задачи для помощника руководителя.
+
+Задача: ${task.title}
+Описание: ${task.desc}
+Ожидаемый результат: ${task.er}
+
+Ответь ТОЛЬКО JSON (без markdown):
+{"steps":[{"n":1,"text":"шаг","time":"15 мин"},...],"warning":"главная ошибка которую надо избежать","tip":"главный совет"}`
+          }]
+        })
+      });
+      const data = await resp.json();
+      const text = (data.content?.[0]?.text||"").replace(/```json|```/g,"").trim();
+      setAiPlan(JSON.parse(text));
+    } catch(e) { setAiPlan({steps:[],warning:"",tip:"Не удалось загрузить план"}) }
+    setPlanLoading(false);
+  }
+
+  async function checkWithAI() {
+    if (!result.trim()) return;
+    setChecking(true); setReview(null);
+    try {
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
+          messages: [{role:"user", content:
+            `Ты строгий но справедливый проверяющий качества работы ассистента.
+
+Задача: ${task.title}
+Описание: ${task.desc}
+Ожидаемый результат: ${task.er}
+
+Результат ассистента:
+${result}
+
+Проверь качество и ответь ТОЛЬКО JSON (без markdown):
+{"score":число 0-100,"verdict":"отлично"|"хорошо"|"частично"|"плохо","summary":"один вывод","checks":[{"label":"что проверялось","ok":true,"comment":"пояснение"}],"recommendation":"конкретный совет или пустая строка"}`
+          }]
+        })
+      });
+      const data = await resp.json();
+      const text = (data.content?.[0]?.text||"").replace(/```json|```/g,"").trim();
+      setReview(JSON.parse(text));
+    } catch(e) {
+      setReview({score:0,verdict:"ошибка",summary:"Не удалось проверить. Попробуйте ещё раз.",checks:[],recommendation:""});
+    }
+    setChecking(false);
+  }
+
+  const VC = {
+    отлично:  {c:G, bg:"rgba(52,199,89,0.10)",  i:"🎉", l:"Отлично!"},
+    хорошо:   {c:B, bg:"rgba(0,122,255,0.10)",  i:"✅", l:"Хорошо"},
+    частично: {c:O, bg:"rgba(255,149,0,0.10)",  i:"⚠️", l:"Частично"},
+    плохо:    {c:R, bg:"rgba(255,59,48,0.10)",  i:"❌", l:"Нужно доработать"},
+    ошибка:   {c:R, bg:"rgba(255,59,48,0.10)",  i:"⚠️", l:"Ошибка"},
+  };
+  const vc = review ? (VC[review.verdict]||VC.ошибка) : null;
+
+  return (
+    <div style={{marginBottom:10}}>
+      {/* AI План */}
+      {!aiPlan && !planLoading && (
+        <button onClick={loadPlan}
+          style={{...sf,width:"100%",background:"rgba(0,122,255,0.08)",
+            border:"1.5px solid rgba(0,122,255,0.2)",borderRadius:12,padding:"11px",
+            fontSize:14,color:B,fontWeight:600,cursor:"pointer",marginBottom:8}}>
+          🧠 Получить AI план выполнения
+        </button>
+      )}
+      {planLoading && (
+        <div style={{...sf,fontSize:13,color:g4,textAlign:"center",padding:"10px 0",marginBottom:8}}>
+          🧠 AI составляет план…
+        </div>
+      )}
+      {aiPlan && (
+        <div style={{background:"rgba(0,122,255,0.04)",border:"1.5px solid rgba(0,122,255,0.15)",
+          borderRadius:14,padding:"12px 14px",marginBottom:10}}>
+          <div style={{...sf,fontSize:12,color:B,fontWeight:700,marginBottom:8}}>🧠 AI ПЛАН ВЫПОЛНЕНИЯ</div>
+          {aiPlan.steps.map((s,i)=>(
+            <div key={i} style={{display:"flex",gap:8,marginBottom:6}}>
+              <div style={{width:22,height:22,borderRadius:6,background:B,color:"#fff",
+                display:"flex",alignItems:"center",justifyContent:"center",
+                fontSize:11,fontWeight:700,flexShrink:0}}>{s.n}</div>
+              <div style={{flex:1}}>
+                <div style={{...sf,fontSize:13,color:"#1c1c1e"}}>{s.text}</div>
+                <div style={{...sf,fontSize:11,color:g4}}>{s.time}</div>
+              </div>
+            </div>
+          ))}
+          {aiPlan.warning && (
+            <div style={{background:"rgba(255,59,48,0.07)",borderRadius:10,padding:"8px 10px",marginTop:8}}>
+              <span style={{...sf,fontSize:12,color:R,fontWeight:600}}>⚠️ Избегать: </span>
+              <span style={{...sf,fontSize:12,color:"#3c3c43"}}>{aiPlan.warning}</span>
+            </div>
+          )}
+          {aiPlan.tip && (
+            <div style={{background:"rgba(52,199,89,0.07)",borderRadius:10,padding:"8px 10px",marginTop:6}}>
+              <span style={{...sf,fontSize:12,color:G,fontWeight:600}}>💡 Совет: </span>
+              <span style={{...sf,fontSize:12,color:"#3c3c43"}}>{aiPlan.tip}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Результат */}
+      <div style={{...sf,fontSize:11,color:g4,fontWeight:600,
+        textTransform:"uppercase",letterSpacing:0.4,marginBottom:6}}>
+        📝 Мой результат
+      </div>
+      <textarea
+        value={result}
+        onChange={e=>setResult(e.target.value)}
+        placeholder="Опиши что сделано, добавь ссылки или детали…"
+        rows={3}
+        style={{...sf,width:"100%",background:g1,border:"none",borderRadius:12,
+          padding:"11px 13px",fontSize:14,outline:"none",resize:"none",
+          boxSizing:"border-box",lineHeight:1.5,marginBottom:8}}
+      />
+
+      {/* AI проверка */}
+      {!review && (
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={checkWithAI} disabled={!result.trim()||checking}
+            style={{...sf,flex:1,background:!result.trim()||checking?g2:B,
+              color:!result.trim()||checking?g3:"#fff",border:"none",borderRadius:12,
+              padding:"11px",fontSize:14,fontWeight:600,
+              cursor:result.trim()&&!checking?"pointer":"default"}}>
+            {checking?"🤖 Проверяю…":"🔍 Проверить через AI"}
+          </button>
+          <button onClick={onDone}
+            style={{...sf,background:"none",border:`1.5px solid ${g2}`,borderRadius:12,
+              padding:"11px 14px",fontSize:12,color:g4,cursor:"pointer"}}>
+            Без проверки
+          </button>
+        </div>
+      )}
+
+      {/* Результат проверки */}
+      {review && vc && (
+        <div>
+          <div style={{background:vc.bg,border:`1.5px solid ${vc.c}30`,borderRadius:14,
+            padding:"14px 16px",marginBottom:8,textAlign:"center"}}>
+            <div style={{fontSize:32,marginBottom:6}}>{vc.i}</div>
+            <div style={{...sf,fontSize:17,fontWeight:800,color:vc.c,marginBottom:4}}>{vc.l}</div>
+            <div style={{...sf,fontSize:13,color:"#3c3c43",lineHeight:1.5,marginBottom:12}}>{review.summary}</div>
+            <div style={{background:"#E5E5EA",borderRadius:6,height:7,overflow:"hidden"}}>
+              <div style={{height:"100%",width:`${review.score}%`,
+                background:`linear-gradient(90deg,${vc.c}88,${vc.c})`,borderRadius:6}}/>
+            </div>
+            <div style={{...sf,fontSize:11,color:vc.c,fontWeight:700,marginTop:4}}>{review.score}%</div>
+          </div>
+          {review.checks?.length>0 && (
+            <div style={{background:WH,borderRadius:14,padding:"10px 14px",marginBottom:8,
+              boxShadow:"0 1px 6px rgba(0,0,0,0.05)"}}>
+              {review.checks.map((c,i)=>(
+                <div key={i} style={{display:"flex",gap:8,padding:"7px 0",
+                  borderBottom:i<review.checks.length-1?`0.5px solid ${SEP}`:"none"}}>
+                  <span style={{fontSize:14}}>{c.ok?"✅":"❌"}</span>
+                  <div>
+                    <div style={{...sf,fontSize:13,fontWeight:600}}>{c.label}</div>
+                    <div style={{...sf,fontSize:12,color:g4}}>{c.comment}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {review.recommendation && (
+            <div style={{background:"rgba(255,149,0,0.08)",border:"1.5px solid rgba(255,149,0,0.25)",
+              borderRadius:12,padding:"10px 13px",marginBottom:8}}>
+              <div style={{...sf,fontSize:12,color:O,fontWeight:700,marginBottom:3}}>💡 Рекомендация</div>
+              <div style={{...sf,fontSize:13,color:"#3c3c43"}}>{review.recommendation}</div>
+            </div>
+          )}
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>setReview(null)}
+              style={{...sf,flex:1,background:WH,border:`1.5px solid ${g2}`,borderRadius:12,
+                padding:"11px",fontSize:14,fontWeight:600,cursor:"pointer",color:"#000"}}>
+              ✏️ Изменить
+            </button>
+            <button onClick={onDone}
+              style={{...sf,flex:1,background:review.score>=70?G:O,color:"#fff",border:"none",
+                borderRadius:12,padding:"11px",fontSize:14,fontWeight:600,cursor:"pointer",
+                boxShadow:`0 4px 12px ${review.score>=70?"rgba(52,199,89,0.35)":"rgba(255,149,0,0.35)"}`}}>
+              {review.score>=70?"✅ Отправить":"🔄 Доработать"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── ЗАДАЧИ ────────────────────────────────────────────────────────────────────
+// ── ПРОЦЕДУРА ПОМОЩИ: форма запроса (ассистент в процессе) ──────────────────
+function AstHelpForm({onSend, onCancel}) {
+  const [comment, setComment] = React.useState("");
+  return (
+    <div style={{background:"rgba(255,59,48,0.04)",border:"1.5px solid rgba(255,59,48,0.18)",borderRadius:14,padding:"13px 15px",marginTop:10}}>
+      <div style={{...sf,fontSize:13,fontWeight:700,color:R,marginBottom:8}}>❗ Запрос помощи руководителя</div>
+      <div style={{...sf,fontSize:12,color:g4,marginBottom:10}}>Опиши проблему — руководитель получит уведомление и ответит</div>
+      <textarea value={comment} onChange={e=>setComment(e.target.value)}
+        placeholder="Например: не могу найти реквизиты поставщика, сайт не работает…"
+        rows={3}
+        style={{...sf,width:"100%",background:WH,border:"1px solid rgba(255,59,48,0.2)",
+          borderRadius:10,padding:"10px 12px",fontSize:14,outline:"none",resize:"none",
+          boxSizing:"border-box",lineHeight:1.5,marginBottom:10}}/>
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={()=>{if(comment.trim())onSend(comment);}}
+          disabled={!comment.trim()}
+          style={{...sf,flex:2,background:comment.trim()?R:g2,color:comment.trim()?"#fff":g3,
+            border:"none",borderRadius:12,padding:"12px",fontSize:14,fontWeight:700,cursor:comment.trim()?"pointer":"default"}}>
+          📤 Отправить руководителю
+        </button>
+        <button onClick={onCancel}
+          style={{...sf,flex:1,background:"none",border:`1.5px solid ${g2}`,borderRadius:12,padding:"12px 8px",fontSize:12,color:g4,cursor:"pointer"}}>
+          Отмена
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── ПРОЦЕДУРА ПОМОЩИ: статус ожидания / ответ получен (ассистент) ────────────
+function AstHelpStatus({task, onRecall, onContinue}) {
+  if (task.mgrReply) {
+    return (
+      <div style={{marginTop:10}}>
+        <div style={{background:"rgba(52,199,89,0.07)",border:"1.5px solid rgba(52,199,89,0.25)",borderRadius:14,padding:"13px 15px"}}>
+          <div style={{...sf,fontSize:11,color:G,fontWeight:700,textTransform:"uppercase",letterSpacing:0.4,marginBottom:10}}>✅ Руководитель ответил</div>
+          <div style={{background:"rgba(0,0,0,0.04)",borderRadius:10,padding:"9px 12px",marginBottom:8}}>
+            <div style={{...sf,fontSize:11,color:g4,marginBottom:3}}>Твой вопрос:</div>
+            <div style={{...sf,fontSize:13,color:"#3c3c43"}}>{task.helpComment}</div>
+          </div>
+          <div style={{background:WH,borderRadius:10,padding:"10px 12px",border:"1px solid rgba(52,199,89,0.2)"}}>
+            <div style={{...sf,fontSize:11,color:G,fontWeight:600,marginBottom:4}}>Ответ и правки:</div>
+            <div style={{...sf,fontSize:14,color:"#1c1c1e",lineHeight:1.5}}>{task.mgrReply}</div>
+          </div>
+        </div>
+        <button onClick={onContinue}
+          style={{...sf,width:"100%",background:"rgba(0,122,255,0.08)",border:"1.5px solid rgba(0,122,255,0.22)",
+            borderRadius:12,padding:"12px",fontSize:14,fontWeight:600,color:B,cursor:"pointer",marginTop:8}}>
+          ⚡ Продолжить работу над задачей
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div style={{marginTop:10}}>
+      <div style={{background:"rgba(255,59,48,0.06)",border:"1.5px solid rgba(255,59,48,0.2)",borderRadius:14,padding:"13px 15px"}}>
+        <div style={{...sf,fontSize:11,color:R,fontWeight:700,textTransform:"uppercase",letterSpacing:0.4,marginBottom:8}}>❗ Запрос отправлен руководителю</div>
+        <div style={{background:"rgba(255,59,48,0.04)",borderRadius:10,padding:"9px 12px",marginBottom:8}}>
+          <div style={{...sf,fontSize:13,color:"#3c3c43",lineHeight:1.5}}>{task.helpComment}</div>
+        </div>
+        <div style={{...sf,fontSize:12,color:g4}}>⏳ Ожидаем ответа руководителя…</div>
+      </div>
+      <button onClick={onRecall}
+        style={{...sf,width:"100%",background:"none",border:`1.5px solid ${g2}`,
+          borderRadius:12,padding:"11px",fontSize:13,color:g4,cursor:"pointer",marginTop:8}}>
+        ↩️ Отозвать запрос
+      </button>
+    </div>
+  );
+}
+
+// ── ПРОЦЕДУРА ПОМОЩИ: ответ руководителя ────────────────────────────────────
+function MgrHelpReply({task, onReply}) {
+  const [reply, setReply] = React.useState(task.mgrReply||"");
+  const [sent, setSent] = React.useState(!!task.mgrReply);
+  if (sent) {
+    return (
+      <div style={{background:"rgba(52,199,89,0.07)",border:"1.5px solid rgba(52,199,89,0.2)",borderRadius:14,padding:"13px 15px",marginTop:10}}>
+        <div style={{...sf,fontSize:11,color:G,fontWeight:700,marginBottom:6}}>✅ Ответ отправлен ассистенту</div>
+        <div style={{...sf,fontSize:13,color:"#3c3c43",lineHeight:1.5}}>{reply}</div>
+        <button onClick={()=>setSent(false)} style={{...sf,fontSize:12,color:B,background:"none",border:"none",cursor:"pointer",marginTop:8,display:"block"}}>Изменить</button>
+      </div>
+    );
+  }
+  return (
+    <div style={{background:"rgba(255,59,48,0.06)",border:"1.5px solid rgba(255,59,48,0.2)",borderRadius:14,padding:"13px 15px",marginTop:10}}>
+      <div style={{...sf,fontSize:13,fontWeight:700,color:R,marginBottom:10}}>❗ Ассистент просит помощи</div>
+      <div style={{background:WH,borderRadius:10,padding:"10px 12px",marginBottom:10,border:"1px solid rgba(255,59,48,0.15)"}}>
+        <div style={{...sf,fontSize:11,color:g4,marginBottom:3}}>Вопрос / проблема:</div>
+        <div style={{...sf,fontSize:14,color:"#1c1c1e",lineHeight:1.5}}>{task.helpComment}</div>
+      </div>
+      <div style={{...sf,fontSize:12,color:g4,marginBottom:8}}>Напишите правки — задача вернётся в работу у ассистента</div>
+      <textarea value={reply} onChange={e=>setReply(e.target.value)}
+        placeholder="Ответ на вопрос или правки…" rows={3}
+        style={{...sf,width:"100%",background:WH,border:"1px solid rgba(0,122,255,0.2)",
+          borderRadius:10,padding:"10px 12px",fontSize:14,outline:"none",resize:"none",
+          boxSizing:"border-box",lineHeight:1.5,marginBottom:10}}/>
+      <button onClick={()=>{if(!reply.trim())return;onReply(reply);setSent(true);}}
+        disabled={!reply.trim()}
+        style={{...sf,width:"100%",background:reply.trim()?B:g2,color:reply.trim()?"#fff":g3,
+          border:"none",borderRadius:12,padding:"12px",fontSize:14,fontWeight:700,
+          cursor:reply.trim()?"pointer":"default",
+          boxShadow:reply.trim()?"0 4px 14px rgba(0,122,255,0.3)":"none"}}>
+        ✅ Отправить ответ ассистенту
+      </button>
+    </div>
+  );
+}
+
 function TasksBlock({tasks, setTasks, mgrId, myRole, onNewTask}) {
   const [openId,  setOpenId]  = useState(null);
   const [filter,  setFilter]  = useState("all");
@@ -686,6 +1015,7 @@ function TasksBlock({tasks, setTasks, mgrId, myRole, onNewTask}) {
   const [rateId,  setRateId]  = useState(null);
   const [star,    setStar]    = useState(0);
   const [comment, setComment] = useState("");
+  const [askHelpId, setAskHelpId] = useState(null);
 
   const list = tasks[mgrId] || [];
   const counts = {
@@ -872,31 +1202,30 @@ function TasksBlock({tasks, setTasks, mgrId, myRole, onNewTask}) {
                   )}
                   {myRole==="assistant" && t.status==="in_progress" && (
                     <div>
-                      {/* Поле результата */}
-                      <div style={{marginBottom:10}}>
-                        <div style={{...sf,fontSize:11,color:g4,fontWeight:600,
-                          textTransform:"uppercase",letterSpacing:0.4,marginBottom:6}}>
-                          📝 Результат работы
-                        </div>
-                        <textarea
-                          value={t.result||""}
-                          onChange={e=>upd(t.id,{result:e.target.value})}
-                          placeholder="Опиши что сделано, добавь ссылки или детали…"
-                          rows={3}
-                          style={{...sf,width:"100%",background:g1,border:"none",borderRadius:12,
-                            padding:"11px 13px",fontSize:14,outline:"none",resize:"none",
-                            boxSizing:"border-box",lineHeight:1.5}}
-                        />
-                      </div>
-                      <div style={{display:"flex",gap:8}}>
-                        <button onClick={()=>upd(t.id,{status:"done"})}
-                          style={{...sf,flex:1,background:G,color:"#fff",border:"none",borderRadius:10,
-                            padding:"11px",cursor:"pointer",fontSize:14,fontWeight:600}}>✓ Готово</button>
-                        <button onClick={()=>upd(t.id,{status:"problem"})}
-                          style={{...sf,flex:1,background:R,color:"#fff",border:"none",borderRadius:10,
-                            padding:"11px",cursor:"pointer",fontSize:14,fontWeight:600}}>❗ Помощь</button>
-                      </div>
+                      <AiCheck task={t} onDone={(result)=>upd(t.id,{status:"done",result:result||t.result})}/>
+                      {askHelpId===t.id ? (
+                        <AstHelpForm
+                          onSend={c=>{upd(t.id,{status:"problem",helpComment:c,mgrReply:""});setAskHelpId(null);setOpenId(null);}}
+                          onCancel={()=>setAskHelpId(null)}/>
+                      ) : (
+                        <button onClick={()=>setAskHelpId(t.id)}
+                          style={{...sf,width:"100%",background:"rgba(255,59,48,0.06)",
+                            border:"1.5px solid rgba(255,59,48,0.18)",borderRadius:10,
+                            padding:"10px",cursor:"pointer",fontSize:13,color:R,fontWeight:600,marginTop:8}}>
+                          ❗ Нужна помощь руководителя
+                        </button>
+                      )}
                     </div>
+                  )}
+                  {/* Ассистент: статус problem */}
+                  {myRole==="assistant" && t.status==="problem" && (
+                    <AstHelpStatus task={t}
+                      onRecall={()=>upd(t.id,{status:"in_progress",helpComment:"",mgrReply:""})}
+                      onContinue={()=>upd(t.id,{status:"in_progress",helpComment:"",mgrReply:""})}/>
+                  )}
+                  {/* Руководитель: видит запрос помощи */}
+                  {myRole==="manager" && t.status==="problem" && (
+                    <MgrHelpReply task={t} onReply={reply=>upd(t.id,{mgrReply:reply})}/>
                   )}
                   {/* Результат виден всем когда задача выполнена */}
                   {t.status==="done" && t.result && (
@@ -1150,21 +1479,22 @@ function AdminPanel({users, setUsers, tasks}) {
     setModal(null);
   }
   function openAddAst() {
-    setForm({name:"",login:"",pw:"",color:COLORS_LIST[1]});
+    setForm({name:"",login:"",pw:"",color:COLORS_LIST[1],ratePerClient:"90000"});
     setSel(null); setModal("edit_ast");
   }
   function openEditAst(u) {
-    setForm({name:u.name,login:u.login,pw:u.pw,color:u.color});
+    setForm({name:u.name,login:u.login,pw:u.pw,color:u.color,ratePerClient:String(u.ratePerClient||90000)});
     setSel(u); setModal("edit_ast");
   }
   function saveAst() {
     if (!form.name||!form.login||!form.pw) return;
     const initials = genInitials(form.name);
+    const rate = parseInt(form.ratePerClient) || 90000;
     if (sel) {
-      setUsers(p => p.map(u => u.id===sel.id ? {...u,...form,initials} : u));
+      setUsers(p => p.map(u => u.id===sel.id ? {...u,...form,initials,ratePerClient:rate} : u));
     } else {
       const id = "ast"+Date.now();
-      setUsers(p => [...p, {id,role:"assistant",initials,...form,clients:[],active:true}]);
+      setUsers(p => [...p, {id,role:"assistant",initials,...form,ratePerClient:rate,clients:[],active:true}]);
     }
     setModal(null);
   }
@@ -1637,6 +1967,7 @@ export default function App() {
         clients: u.clients || [],
         ast_id: u.astId || null,
         sub_days: u.subDays ?? 30,
+        rate_per_client: u.ratePerClient ?? 90000,
         info: u.info || "", about: u.about || "",
         likes: u.likes || "", dislikes: u.dislikes || "",
         accesses: u.accesses || [], files: u.files || [],
@@ -1674,6 +2005,8 @@ export default function App() {
         er: task.er || "", status: task.status || "new",
         rating: task.rating || null, rc: task.rc || null,
         saved: task.saved || null, result: task.result || "",
+        help_comment: task.helpComment || "",
+        mgr_reply: task.mgrReply || "",
         files: task.files || [],
       });
     } catch(e) { console.error("Ошибка сохранения задачи:", e); }
@@ -1960,6 +2293,21 @@ export default function App() {
                       );
                     })()}
 
+                    {/* Уведомление: ассистент просит помощи */}
+                    {(tasks[freshMe.id]||[]).some(t=>t.status==="problem") && (
+                      <div onClick={()=>setTab("tasks")}
+                        style={{background:"rgba(255,59,48,0.08)",border:"1.5px solid rgba(255,59,48,0.3)",
+                          borderRadius:16,padding:"13px 16px",marginBottom:14,cursor:"pointer",
+                          display:"flex",alignItems:"center",gap:12}}>
+                        <div style={{width:40,height:40,borderRadius:12,background:R,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>❗</div>
+                        <div style={{flex:1}}>
+                          <div style={{...sf,fontSize:14,fontWeight:700,color:R}}>Ассистент просит помощи</div>
+                          <div style={{...sf,fontSize:12,color:g4}}>Откройте Задачи → вкладка «Помощь»</div>
+                        </div>
+                        <span style={{...sf,fontSize:18,color:R}}>→</span>
+                      </div>
+                    )}
+
                     {freshMe.subDays <= 14 && (
                       <div style={{background:freshMe.subDays<=7?"rgba(255,59,48,0.08)":"rgba(255,149,0,0.08)",
                         border:`1.5px solid ${freshMe.subDays<=7?"rgba(255,59,48,0.25)":"rgba(255,149,0,0.25)"}`,
@@ -1986,6 +2334,21 @@ export default function App() {
                   ? <WeeklyReport tasks={weekTasks} weekSaved={weekSaved} mgrName={activeMgrObj?.name||""}/>
                   : null;
               })()}
+
+              {/* Уведомление ассистенту: руководитель ответил */}
+              {isAst && astClients.some(c=>(tasks[c.id]||[]).some(t=>t.status==="problem"&&t.mgrReply)) && (
+                <div onClick={()=>setTab("tasks")}
+                  style={{background:"rgba(52,199,89,0.08)",border:"1.5px solid rgba(52,199,89,0.3)",
+                    borderRadius:16,padding:"13px 16px",marginBottom:14,cursor:"pointer",
+                    display:"flex",alignItems:"center",gap:12}}>
+                  <div style={{width:40,height:40,borderRadius:12,background:G,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>✅</div>
+                  <div style={{flex:1}}>
+                    <div style={{...sf,fontSize:14,fontWeight:700,color:G}}>Руководитель ответил!</div>
+                    <div style={{...sf,fontSize:12,color:g4}}>Откройте Задачи → вкладка «Помощь»</div>
+                  </div>
+                  <span style={{...sf,fontSize:18,color:G}}>→</span>
+                </div>
+              )}
 
               <div style={{background:WH,borderRadius:20,padding:16,marginBottom:14,boxShadow:"0 1px 8px rgba(0,0,0,0.06)"}}>
                 <div style={{...sf,fontSize:15,fontWeight:700,marginBottom:12}}>📅 Календарь</div>
