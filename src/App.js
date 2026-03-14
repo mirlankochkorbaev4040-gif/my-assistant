@@ -1,5 +1,5 @@
 /* eslint-disable */
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 // ── SUPABASE через fetch (без библиотеки) ─────────────────────────────────────
 const SUPA_URL = "https://hngwpbfgaiuwnxhzxdxp.supabase.co";
@@ -1011,11 +1011,12 @@ function TasksBlock({tasks, setTasks, mgrId, myRole, onNewTask}) {
   const [openId,  setOpenId]  = useState(null);
   const [filter,  setFilter]  = useState("all");
   const [adding,  setAdding]  = useState(false);
-  const [form,    setForm]    = useState({title:"",desc:"",deadline:"",priority:"medium",er:""});
+  const [form,    setForm]    = useState({title:"",desc:"",deadline:"",priority:"medium",er:"",photo:null,link:""});
   const [rateId,  setRateId]  = useState(null);
   const [star,    setStar]    = useState(0);
   const [comment, setComment] = useState("");
   const [askHelpId, setAskHelpId] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null);
 
   const list = tasks[mgrId] || [];
   const counts = {
@@ -1031,14 +1032,26 @@ function TasksBlock({tasks, setTasks, mgrId, myRole, onNewTask}) {
   function upd(id, patch) {
     setTasks(p => ({...p, [mgrId]: (p[mgrId]||[]).map(t => t.id===id ? {...t,...patch} : t)}));
   }
+  function deleteTask(id) {
+    setConfirmDelete(id); // показываем встроенный confirm вместо window.confirm
+  }
+  function confirmDeleteTask(id) {
+    setTasks(p => ({...p, [mgrId]: (p[mgrId]||[]).filter(t => t.id !== id)}));
+    fetch(`${SUPA_URL}/rest/v1/tasks?id=eq.${id}`, {method:"DELETE", headers:{
+      "apikey": SUPA_KEY, "Authorization": `Bearer ${SUPA_KEY}`
+    }}).catch(e => console.error(e));
+    setOpenId(null);
+    setConfirmDelete(null);
+  }
   function addTask() {
     if (!form.title || !form.deadline || !form.er) return;
     const t = {id:Date.now(), title:form.title, desc:form.desc, deadline:form.deadline,
                priority:form.priority, er:form.er, status:"new",
+               photo:form.photo||null, link:form.link||null,
                rating:null, rc:null, saved:null, files:[]};
     setTasks(p => ({...p, [mgrId]: [...(p[mgrId]||[]), t]}));
     if (onNewTask) onNewTask();
-    setForm({title:"",desc:"",deadline:"",priority:"medium",er:""});
+    setForm({title:"",desc:"",deadline:"",priority:"medium",er:"",photo:null,link:""});
     setAdding(false);
   }
 
@@ -1115,11 +1128,118 @@ function TasksBlock({tasks, setTasks, mgrId, myRole, onNewTask}) {
                     <span style={{...sf,fontSize:12,color:B,fontWeight:600}}>Ожидаемый результат: </span>
                     <span style={{...sf,fontSize:13,color:"#3C3C43"}}>{t.er}</span>
                   </div>
-                  <button style={{...sf,background:"none",border:`1.5px solid ${g2}`,borderRadius:10,
-                    padding:"7px 13px",fontSize:13,color:g4,cursor:"pointer",
-                    marginBottom:12,display:"flex",alignItems:"center",gap:5}}>
-                    📎 Прикрепить файл
-                  </button>
+                  {/* Показываем вложения из задачи */}
+                  {(t.photo || t.link) && (
+                    <div style={{marginBottom:12}}>
+                      {t.photo && (
+                        <img src={t.photo} alt="вложение"
+                          style={{width:"100%",maxHeight:180,objectFit:"cover",borderRadius:12,marginBottom:8,cursor:"pointer"}}
+                          onClick={()=>window.open(t.photo)}/>
+                      )}
+                      {t.link && (
+                        <a href={t.link.startsWith("http")?t.link:"https://"+t.link}
+                          target="_blank" rel="noreferrer"
+                          style={{...sf,display:"flex",alignItems:"center",gap:8,
+                            background:"rgba(0,122,255,0.06)",border:"1.5px solid rgba(0,122,255,0.15)",
+                            borderRadius:10,padding:"10px 13px",fontSize:13,color:B,fontWeight:600,textDecoration:"none"}}>
+                          🔗 {t.link.length>40?t.link.slice(0,40)+"…":t.link}
+                        </a>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Ассистент — прикрепить фото/ссылку к результату */}
+                  {myRole==="assistant" && t.status!=="done" && (
+                    <div style={{marginBottom:12}}>
+                      <div style={{...sf,fontSize:11,color:g4,fontWeight:600,
+                        textTransform:"uppercase",marginBottom:6}}>Прикрепить к результату</div>
+                      <div style={{display:"flex",gap:8,marginBottom:6}}>
+                        <label style={{...sf,flex:1,background:t.resultPhoto?"rgba(52,199,89,0.08)":g1,
+                          border:`1.5px solid ${t.resultPhoto?G:"transparent"}`,
+                          borderRadius:10,padding:"8px",cursor:"pointer",fontSize:13,
+                          color:t.resultPhoto?G:g4,fontWeight:600,textAlign:"center",display:"block"}}>
+                          {t.resultPhoto?"✅ Фото":"📷 Фото"}
+                          <input type="file" accept="image/*" style={{display:"none"}}
+                            onChange={e=>{
+                              const file = e.target.files[0];
+                              if (!file) return;
+                              const reader = new FileReader();
+                              reader.onload = ev => upd(t.id,{resultPhoto:ev.target.result});
+                              reader.readAsDataURL(file);
+                            }}/>
+                        </label>
+                        {t.resultPhoto && (
+                          <button onClick={()=>upd(t.id,{resultPhoto:null})}
+                            style={{...sf,background:"rgba(255,59,48,0.08)",border:"none",
+                              borderRadius:10,padding:"8px 12px",fontSize:13,color:R,cursor:"pointer",fontWeight:600}}>
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                      {t.resultPhoto && (
+                        <img src={t.resultPhoto} alt="результат"
+                          style={{width:"100%",maxHeight:140,objectFit:"cover",borderRadius:10,marginBottom:8}}/>
+                      )}
+                      <input defaultValue={t.resultLink||""}
+                        onBlur={e=>upd(t.id,{resultLink:e.target.value})}
+                        placeholder="🔗 Ссылка на результат"
+                        style={{...sf,width:"100%",background:g1,border:"none",borderRadius:10,
+                          padding:"10px 13px",fontSize:13,outline:"none",boxSizing:"border-box"}}/>
+                    </div>
+                  )}
+
+                  {/* Менеджер видит вложения результата */}
+                  {myRole==="manager" && (t.resultPhoto||t.resultLink) && (
+                    <div style={{marginBottom:12}}>
+                      <div style={{...sf,fontSize:11,color:g4,fontWeight:600,
+                        textTransform:"uppercase",marginBottom:6}}>Вложения к результату</div>
+                      {t.resultPhoto && (
+                        <img src={t.resultPhoto} alt="результат"
+                          style={{width:"100%",maxHeight:180,objectFit:"cover",borderRadius:12,marginBottom:8,cursor:"pointer"}}
+                          onClick={()=>window.open(t.resultPhoto)}/>
+                      )}
+                      {t.resultLink && (
+                        <a href={t.resultLink.startsWith("http")?t.resultLink:"https://"+t.resultLink}
+                          target="_blank" rel="noreferrer"
+                          style={{...sf,display:"flex",alignItems:"center",gap:8,
+                            background:"rgba(52,199,89,0.06)",border:"1.5px solid rgba(52,199,89,0.2)",
+                            borderRadius:10,padding:"10px 13px",fontSize:13,color:G,fontWeight:600,textDecoration:"none"}}>
+                          🔗 {t.resultLink.length>40?t.resultLink.slice(0,40)+"…":t.resultLink}
+                        </a>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Удалить задачу — только руководитель */}
+                  {myRole==="manager" && (
+                    confirmDelete===t.id ? (
+                      <div style={{background:"rgba(255,59,48,0.06)",border:"1.5px solid rgba(255,59,48,0.25)",
+                        borderRadius:12,padding:"13px",marginBottom:12}}>
+                        <div style={{...sf,fontSize:14,fontWeight:600,color:"#FF3B30",marginBottom:10}}>
+                          Удалить задачу?
+                        </div>
+                        <div style={{display:"flex",gap:8}}>
+                          <button onClick={()=>confirmDeleteTask(t.id)}
+                            style={{...sf,flex:1,background:"#FF3B30",color:"#fff",border:"none",
+                              borderRadius:8,padding:"10px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+                            Да, удалить
+                          </button>
+                          <button onClick={()=>setConfirmDelete(null)}
+                            style={{...sf,flex:1,background:"#F1F5F9",color:"#64748B",border:"none",
+                              borderRadius:8,padding:"10px",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+                            Отмена
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button onClick={()=>deleteTask(t.id)}
+                        style={{...sf,background:"rgba(255,59,48,0.06)",border:"1.5px solid rgba(255,59,48,0.2)",
+                          borderRadius:10,padding:"9px 13px",fontSize:13,color:"#FF3B30",cursor:"pointer",
+                          width:"100%",marginBottom:12,fontWeight:600}}>
+                        🗑 Удалить задачу
+                      </button>
+                    )
+                  )}
 
                   {/* Оценка — для руководителя */}
                   {myRole==="manager" && t.status==="done" && (
@@ -1285,11 +1405,41 @@ function TasksBlock({tasks, setTasks, mgrId, myRole, onNewTask}) {
               </div>
             </div>
           </div>
-          <button style={{...sf,background:"none",border:`1.5px solid ${g2}`,borderRadius:10,
-            padding:"7px 13px",fontSize:13,color:g4,cursor:"pointer",
-            marginBottom:12,display:"flex",alignItems:"center",gap:5}}>
-            📎 Прикрепить файл
-          </button>
+          {/* Прикрепить фото */}
+          <div style={{marginBottom:10}}>
+            <div style={{...sf,fontSize:11,color:g4,fontWeight:600,textTransform:"uppercase",marginBottom:5}}>Вложения</div>
+            <div style={{display:"flex",gap:8,marginBottom:8}}>
+              <label style={{...sf,flex:1,background:form.photo?"rgba(52,199,89,0.08)":g1,
+                border:`1.5px solid ${form.photo?G:"transparent"}`,
+                borderRadius:10,padding:"9px",cursor:"pointer",fontSize:13,
+                color:form.photo?G:g4,fontWeight:600,textAlign:"center",display:"block"}}>
+                {form.photo?"✅ Фото":"📷 Фото"}
+                <input type="file" accept="image/*" style={{display:"none"}}
+                  onChange={e=>{
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = ev => setForm(f=>({...f,photo:ev.target.result}));
+                    reader.readAsDataURL(file);
+                  }}/>
+              </label>
+              {form.photo && (
+                <button onClick={()=>setForm(f=>({...f,photo:null}))}
+                  style={{...sf,background:"rgba(255,59,48,0.08)",border:"none",
+                    borderRadius:10,padding:"9px 12px",fontSize:13,color:R,cursor:"pointer",fontWeight:600}}>
+                  ✕
+                </button>
+              )}
+            </div>
+            {form.photo && (
+              <img src={form.photo} alt="preview"
+                style={{width:"100%",maxHeight:140,objectFit:"cover",borderRadius:10,marginBottom:8}}/>
+            )}
+            <input value={form.link} onChange={e=>setForm(f=>({...f,link:e.target.value}))}
+              placeholder="🔗 Вставьте ссылку (необязательно)"
+              style={{...sf,width:"100%",background:g1,border:"none",borderRadius:10,
+                padding:"11px 13px",fontSize:14,outline:"none",boxSizing:"border-box"}}/>
+          </div>
           <div style={{display:"flex",gap:8}}>
             <button onClick={addTask}
               disabled={!form.title||!form.deadline||!form.er}
@@ -1439,6 +1589,9 @@ function AdminPanel({users, setUsers, tasks}) {
   const [sel,    setSel]    = useState(null);
   const [form,   setForm]   = useState({});
   const [copied, setCopied] = useState(null);
+  const [pwForm, setPwForm] = useState({cur:"", next:"", next2:""});
+  const [replaceModal, setReplaceModal] = useState(null); // astId которого заменяем
+  const [pwMsg,  setPwMsg]  = useState("");
 
   const assistants = users.filter(u => u.role==="assistant");
   const managers   = users.filter(u => u.role==="manager");
@@ -1460,21 +1613,25 @@ function AdminPanel({users, setUsers, tasks}) {
     const initials = genInitials(form.name);
     const sub = parseInt(form.subDays)||30;
     if (sel) {
-      // переназначение ассистента
-      if (form.astId !== sel.astId) {
-        setUsers(p => p.map(u => {
-          if (u.id===sel.astId) return {...u, clients:(u.clients||[]).filter(c=>c!==sel.id)};
-          if (u.id===form.astId) return {...u, clients:[...(u.clients||[]), sel.id]};
-          return u;
-        }));
-      }
-      setUsers(p => p.map(u => u.id===sel.id ? {...u,...form,initials,subDays:sub} : u));
+      // Всё в одном setUsers вызове — атомарно
+      setUsers(p => p.map(u => {
+        if (u.id === sel.id) return {...u, ...form, initials, subDays:sub};
+        if (form.astId !== sel.astId) {
+          if (u.id === sel.astId) return {...u, clients:(u.clients||[]).filter(c=>c!==sel.id)};
+          if (u.id === form.astId) return {...u, clients:[...(u.clients||[]), sel.id]};
+        }
+        return u;
+      }));
     } else {
       const id = "mgr"+Date.now();
-      const nu = {id,role:"manager",initials,...form,subDays:sub,
-        info:"",about:"",likes:"",dislikes:"",accesses:[],files:[]};
-      setUsers(p => [...p, nu]);
-      if (form.astId) setUsers(p => p.map(u => u.id===form.astId ? {...u,clients:[...(u.clients||[]),id]} : u));
+      const nu = {id, role:"manager", initials, ...form, subDays:sub,
+        info:"", about:"", likes:"", dislikes:"", accesses:[], files:[], active:true};
+      // Один setUsers вызов: добавляем клиента И обновляем ассистента
+      setUsers(p => {
+        const withNew = [...p, nu];
+        if (!form.astId) return withNew;
+        return withNew.map(u => u.id===form.astId ? {...u, clients:[...(u.clients||[]), id]} : u);
+      });
     }
     setModal(null);
   }
@@ -1501,12 +1658,25 @@ function AdminPanel({users, setUsers, tasks}) {
   function reassign(mgrId, newAstId) {
     const mgr = users.find(u=>u.id===mgrId);
     if (!mgr || mgr.astId===newAstId) return;
+    // Атомарно: всё в одном вызове
     setUsers(p => p.map(u => {
       if (u.id===mgr.astId) return {...u, clients:(u.clients||[]).filter(c=>c!==mgrId)};
       if (u.id===newAstId)  return {...u, clients:[...(u.clients||[]), mgrId]};
+      if (u.id===mgrId)     return {...u, astId:newAstId};
       return u;
     }));
-    setUsers(p => p.map(u => u.id===mgrId ? {...u,astId:newAstId} : u));
+  }
+
+  function replaceAssistant(oldAstId, newAstId) {
+    // Переводим ВСЕХ клиентов от старого ассистента к новому за один вызов
+    const oldClients = managers.filter(m => m.astId === oldAstId).map(m => m.id);
+    if (oldClients.length === 0 || oldAstId === newAstId) return;
+    setUsers(p => p.map(u => {
+      if (u.id === oldAstId) return {...u, clients: []};
+      if (u.id === newAstId) return {...u, clients: [...new Set([...(u.clients||[]), ...oldClients])]};
+      if (oldClients.includes(u.id)) return {...u, astId: newAstId};
+      return u;
+    }));
   }
   function toggleActive(id) {
     setUsers(p => p.map(u => u.id===id ? {...u,active:u.active===false} : u));
@@ -1540,7 +1710,7 @@ function AdminPanel({users, setUsers, tasks}) {
   const inp = {...sf,width:"100%",background:g1,border:"none",borderRadius:12,
     padding:"12px 14px",fontSize:15,outline:"none",boxSizing:"border-box",marginBottom:12};
 
-  const TABS_ADM = [["clients","👤 Клиенты"],["assistants","🧠 Ассистенты"],["kpi","📊 КПИ"],["notif","🔔"]];
+  const TABS_ADM = [["clients","👤 Клиенты"],["assistants","🧠 Ассистенты"],["kpi","📊 КПИ"],["notif","🔔"],["settings","⚙️"]];
 
   return (
     <div style={{flex:1,display:"flex",flexDirection:"column",minHeight:0}}>
@@ -1687,6 +1857,17 @@ function AdminPanel({users, setUsers, tasks}) {
                       {isActive?"Деактив.":"Активировать"}
                     </button>
                   </div>
+                  {/* Кнопка замены — только если есть клиенты */}
+                  {clients.length > 0 && (
+                    <button onClick={()=>setReplaceModal(ast.id)}
+                      style={{...sf,width:"100%",marginTop:8,
+                        background:"rgba(255,149,0,0.08)",
+                        border:"1.5px solid rgba(255,149,0,0.25)",
+                        borderRadius:10,padding:"10px",cursor:"pointer",
+                        fontSize:13,color:O,fontWeight:700}}>
+                      ⚡ Заменить ассистента ({clients.length} клиентов)
+                    </button>
+                  )}
                 </div>
               </div>
             );
@@ -1778,7 +1959,168 @@ function AdminPanel({users, setUsers, tasks}) {
             ))}
           </div>
         </>}
+
+        {tab==="settings" && <>
+          <div style={{...sf,fontSize:16,fontWeight:700,marginBottom:20}}>⚙️ Настройки администратора</div>
+
+          <div style={{background:WH,borderRadius:16,padding:"16px 18px",
+            boxShadow:"0 1px 6px rgba(0,0,0,0.07)",marginBottom:14}}>
+            <div style={{...sf,fontSize:14,fontWeight:700,marginBottom:16}}>🔑 Сменить пароль</div>
+
+            <div style={{...sf,fontSize:11,color:g4,fontWeight:600,textTransform:"uppercase",marginBottom:6}}>Текущий пароль</div>
+            <input type="password" value={pwForm.cur}
+              onChange={e=>setPwForm({...pwForm,cur:e.target.value})}
+              placeholder="Текущий пароль" style={{...inp,marginBottom:12}}/>
+
+            <div style={{...sf,fontSize:11,color:g4,fontWeight:600,textTransform:"uppercase",marginBottom:6}}>Новый пароль</div>
+            <input type="password" value={pwForm.next}
+              onChange={e=>setPwForm({...pwForm,next:e.target.value})}
+              placeholder="Минимум 4 символа" style={{...inp,marginBottom:12}}/>
+
+            <div style={{...sf,fontSize:11,color:g4,fontWeight:600,textTransform:"uppercase",marginBottom:6}}>Повторите новый пароль</div>
+            <input type="password" value={pwForm.next2}
+              onChange={e=>setPwForm({...pwForm,next2:e.target.value})}
+              placeholder="Повторите пароль" style={{...inp,marginBottom:12}}/>
+
+            {pwMsg && (
+              <div style={{...sf,fontSize:13,borderRadius:10,padding:"10px 13px",marginBottom:12,
+                background:pwMsg.startsWith("✅")?"rgba(52,199,89,0.1)":"rgba(255,59,48,0.08)",
+                color:pwMsg.startsWith("✅")?"#34C759":"#FF3B30",fontWeight:600}}>
+                {pwMsg}
+              </div>
+            )}
+
+            <button onClick={()=>{
+              const admin = users.find(u=>u.role==="admin");
+              if (!admin) { setPwMsg("❌ Администратор не найден"); return; }
+              if (!pwForm.cur) { setPwMsg("❌ Введите текущий пароль"); return; }
+              if (pwForm.cur !== admin.pw) { setPwMsg("❌ Неверный текущий пароль"); return; }
+              if (pwForm.next.length < 4) { setPwMsg("❌ Пароль слишком короткий (мин. 4 символа)"); return; }
+              if (pwForm.next !== pwForm.next2) { setPwMsg("❌ Пароли не совпадают"); return; }
+              setUsers(p => p.map(u => u.role==="admin" ? {...u, pw: pwForm.next} : u));
+              setPwMsg("✅ Пароль успешно изменён");
+              setPwForm({cur:"",next:"",next2:""});
+              setTimeout(()=>setPwMsg(""), 4000);
+            }} style={{...sf,background:B,color:"#fff",border:"none",borderRadius:12,
+              padding:"13px",fontSize:15,fontWeight:700,cursor:"pointer",width:"100%",
+              boxShadow:"0 4px 14px rgba(0,122,255,0.3)"}}>
+              Сохранить новый пароль
+            </button>
+          </div>
+        </>}
       </div>
+
+      {/* ── МОДАЛКА: замена ассистента ── */}
+      {replaceModal && (() => {
+        const modalAstId = replaceModal?.astId || replaceModal;
+        const oldAst = users.find(u => u.id === modalAstId);
+        const oldClients = managers.filter(m => m.astId === modalAstId);
+        const otherAsts = assistants.filter(a => a.id !== modalAstId);
+        return (
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",
+            display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:200}}
+            onClick={()=>setReplaceModal(null)}>
+            <div style={{background:WH,borderRadius:"24px 24px 0 0",padding:"12px 22px 44px",
+              width:370,maxHeight:"85vh",overflowY:"auto"}}
+              onClick={e=>e.stopPropagation()}>
+              <div style={{width:40,height:4,background:g2,borderRadius:2,margin:"10px auto 20px"}}/>
+
+              {/* Заголовок */}
+              <div style={{...sf,fontSize:18,fontWeight:700,marginBottom:4}}>⚡ Заменить ассистента</div>
+              <div style={{...sf,fontSize:13,color:g4,marginBottom:16,lineHeight:1.5}}>
+                Все клиенты и задачи <b>{oldAst?.name}</b> перейдут к новому ассистенту
+              </div>
+
+              {/* Клиенты — кликабельные для одиночной замены */}
+              <div style={{...sf,fontSize:11,color:g4,fontWeight:600,
+                textTransform:"uppercase",letterSpacing:0.4,marginBottom:6}}>
+                Клиентов: {oldClients.length}
+              </div>
+              <div style={{...sf,fontSize:12,color:g4,marginBottom:10,lineHeight:1.4}}>
+                Нажмите на клиента чтобы перевести только его, или выберите ассистента чтобы перевести всех
+              </div>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
+                {oldClients.map(cl => (
+                  <button key={cl.id}
+                    onClick={()=>setReplaceModal(prev => ({
+                      astId: prev?.astId || prev,
+                      single: prev?.single===cl.id ? null : cl.id
+                    }))}
+                    style={{...sf,
+                      background:replaceModal?.single===cl.id?`${cl.color}22`:`${cl.color}10`,
+                      border:`1.5px solid ${replaceModal?.single===cl.id?cl.color:`${cl.color}30`}`,
+                      borderRadius:10,padding:"5px 12px",fontSize:12,
+                      color:cl.color,fontWeight:700,cursor:"pointer"}}>
+                    {cl.name.split(" ")[0]}{replaceModal?.single===cl.id?" ✓":""}
+                  </button>
+                ))}
+              </div>
+
+              {/* Режим — один или все */}
+              {replaceModal?.single ? (
+                <div style={{...sf,fontSize:12,background:"rgba(255,149,0,0.08)",
+                  border:"1.5px solid rgba(255,149,0,0.25)",borderRadius:10,
+                  padding:"9px 12px",color:O,marginBottom:14,fontWeight:600}}>
+                  ⚡ Переводим только: {oldClients.find(cl=>cl.id===replaceModal.single)?.name}
+                </div>
+              ) : (
+                <div style={{...sf,fontSize:12,background:"rgba(0,122,255,0.06)",
+                  border:"1.5px solid rgba(0,122,255,0.15)",borderRadius:10,
+                  padding:"9px 12px",color:B,marginBottom:14,fontWeight:600}}>
+                  📋 Все {oldClients.length} клиентов перейдут к выбранному ассистенту
+                </div>
+              )}
+
+              {/* Выбор нового ассистента */}
+              <div style={{...sf,fontSize:11,color:g4,fontWeight:600,
+                textTransform:"uppercase",letterSpacing:0.4,marginBottom:10}}>
+                Выберите нового ассистента
+              </div>
+              {otherAsts.length === 0 ? (
+                <div style={{...sf,fontSize:14,color:g4,textAlign:"center",padding:"20px 0"}}>
+                  Нет других ассистентов
+                </div>
+              ) : (
+                otherAsts.map(ast => (
+                  <button key={ast.id}
+                    onClick={()=>{
+                      const oldId = replaceModal?.astId || replaceModal;
+                      const singleId = replaceModal?.single;
+                      if (singleId) {
+                        reassign(singleId, ast.id);
+                      } else {
+                        replaceAssistant(oldId, ast.id);
+                      }
+                      setReplaceModal(null);
+                    }}
+                    style={{...sf,width:"100%",background:WH,
+                      border:`2px solid ${ast.color}30`,borderRadius:14,
+                      padding:"14px 16px",marginBottom:10,cursor:"pointer",
+                      display:"flex",alignItems:"center",gap:12,
+                      boxShadow:"0 2px 8px rgba(0,0,0,0.06)",textAlign:"left"}}
+                    onMouseEnter={e=>e.currentTarget.style.borderColor=ast.color}
+                    onMouseLeave={e=>e.currentTarget.style.borderColor=`${ast.color}30`}>
+                    <Av u={ast} size={40}/>
+                    <div>
+                      <div style={{...sf,fontSize:15,fontWeight:700,color:"#1C1C1E"}}>{ast.name}</div>
+                      <div style={{...sf,fontSize:12,color:g4,marginTop:2}}>
+                        Сейчас: {managers.filter(m=>m.astId===ast.id).length} клиентов
+                      </div>
+                    </div>
+                    <div style={{marginLeft:"auto",fontSize:20,color:g3}}>›</div>
+                  </button>
+                ))
+              )}
+
+              <button onClick={()=>setReplaceModal(null)}
+                style={{...sf,width:"100%",background:g1,border:"none",borderRadius:12,
+                  padding:"13px",fontSize:14,color:g4,cursor:"pointer",marginTop:4,fontWeight:600}}>
+                Отмена
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── МОДАЛКА: клиент ── */}
       {(modal==="edit_client") && (
@@ -1909,6 +2251,7 @@ export default function App() {
   const [newTasksNotif,setNewTasksNotif]= useState({});
   const [loading,      setLoading]      = useState(true);
   const [error,        setError]        = useState(null);
+  const isSaving = useRef(false); // блокирует polling во время сохранения
 
   // ── Загрузка всех данных из Supabase ──────────────────────────────────────
   const loadAll = useCallback(async () => {
@@ -1954,7 +2297,7 @@ export default function App() {
 
   // ── Polling — обновляем данные каждые 5 секунд ────────────────────────────
   useEffect(() => {
-    const interval = setInterval(() => { if (me) loadAll(); }, 5000);
+    const interval = setInterval(() => { if (me && !isSaving.current) loadAll(); }, 5000);
     return () => clearInterval(interval);
   }, [me, loadAll]);
 
@@ -1973,8 +2316,17 @@ export default function App() {
         accesses: u.accesses || [], files: u.files || [],
         active: u.active !== false,
       });
-      loadAll();
+      // НЕ вызываем loadAll() здесь — это вызывало race condition
     } catch(e) { console.error("Ошибка сохранения пользователя:", e); }
+  }
+
+  async function saveUsersBatch(usersList) {
+    isSaving.current = true; // останавливаем polling на время сохранения
+    try {
+      await Promise.all(usersList.map(u => saveUserToDb(u)));
+      await loadAll();
+    } catch(e) { console.error("Ошибка batch сохранения:", e); }
+    finally { isSaving.current = false; }
   }
 
   async function deleteUserFromDb(id) {
@@ -1986,11 +2338,12 @@ export default function App() {
   const setUsers = fn => {
     setUsersState(prev => {
       const next = fn(prev);
-      // находим что изменилось и сохраняем
-      next.forEach(u => {
+      // находим что изменилось и сохраняем батчем (один loadAll в конце)
+      const changed = next.filter(u => {
         const old = prev.find(p => p.id === u.id);
-        if (JSON.stringify(old) !== JSON.stringify(u)) saveUserToDb(u);
+        return JSON.stringify(old) !== JSON.stringify(u);
       });
+      if (changed.length > 0) saveUsersBatch(changed);
       return next;
     });
   };
