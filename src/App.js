@@ -60,6 +60,10 @@ function rowToTask(r) {
     helpComment: r.help_comment || "",
     mgrReply: r.mgr_reply || "",
     files: r.files || [],
+    photo: r.photo || null,
+    link: r.link || null,
+    resultPhoto: r.result_photo || null,
+    resultLink: r.result_link || null,
   };
 }
 function rowToMsg(r) {
@@ -834,7 +838,7 @@ ${result}
               cursor:result.trim()&&!checking?"pointer":"default"}}>
             {checking?"🤖 Проверяю…":"🔍 Проверить через AI"}
           </button>
-          <button onClick={onDone}
+          <button onClick={()=>onDone(result)}
             style={{...sf,background:"none",border:`1.5px solid ${g2}`,borderRadius:12,
               padding:"11px 14px",fontSize:12,color:g4,cursor:"pointer"}}>
             Без проверки
@@ -900,7 +904,7 @@ ${result}
 // ── ЗАДАЧИ ────────────────────────────────────────────────────────────────────
 // ── ПРОЦЕДУРА ПОМОЩИ: форма запроса (ассистент в процессе) ──────────────────
 function AstHelpForm({onSend, onCancel}) {
-  const [comment, setComment] = React.useState("");
+  const [comment, setComment] = useState("");
   return (
     <div style={{background:"rgba(255,59,48,0.04)",border:"1.5px solid rgba(255,59,48,0.18)",borderRadius:14,padding:"13px 15px",marginTop:10}}>
       <div style={{...sf,fontSize:13,fontWeight:700,color:R,marginBottom:8}}>❗ Запрос помощи руководителя</div>
@@ -971,8 +975,8 @@ function AstHelpStatus({task, onRecall, onContinue}) {
 
 // ── ПРОЦЕДУРА ПОМОЩИ: ответ руководителя ────────────────────────────────────
 function MgrHelpReply({task, onReply}) {
-  const [reply, setReply] = React.useState(task.mgrReply||"");
-  const [sent, setSent] = React.useState(!!task.mgrReply);
+  const [reply, setReply] = useState(task.mgrReply||"");
+  const [sent, setSent] = useState(!!task.mgrReply);
   if (sent) {
     return (
       <div style={{background:"rgba(52,199,89,0.07)",border:"1.5px solid rgba(52,199,89,0.2)",borderRadius:14,padding:"13px 15px",marginTop:10}}>
@@ -2361,6 +2365,10 @@ export default function App() {
         help_comment: task.helpComment || "",
         mgr_reply: task.mgrReply || "",
         files: task.files || [],
+        photo: task.photo || null,
+        link: task.link || null,
+        result_photo: task.resultPhoto || null,
+        result_link: task.resultLink || null,
       });
     } catch(e) { console.error("Ошибка сохранения задачи:", e); }
   }
@@ -2387,7 +2395,6 @@ export default function App() {
         from_role: msg.from, text: msg.text,
         time: msg.time, files: msg.files || [],
       });
-      loadAll();
     } catch(e) { console.error("Ошибка сохранения сообщения:", e); }
   }
 
@@ -2412,7 +2419,6 @@ export default function App() {
         date: ev.date, time: ev.time,
         title: ev.title, type: ev.type, by_role: ev.by,
       });
-      loadAll();
     } catch(e) { console.error("Ошибка сохранения события:", e); }
   }
 
