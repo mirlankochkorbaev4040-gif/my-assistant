@@ -2255,7 +2255,8 @@ export default function App() {
   const [newTasksNotif,setNewTasksNotif]= useState({});
   const [loading,      setLoading]      = useState(true);
   const [error,        setError]        = useState(null);
-  const isSaving = useRef(false); // блокирует polling во время сохранения
+  const isSaving  = useRef(false); // блокирует polling во время сохранения
+  const lastSaved = useRef(0);     // timestamp последнего сохранения
 
   // ── Загрузка всех данных из Supabase ──────────────────────────────────────
   const loadAll = useCallback(async () => {
@@ -2301,7 +2302,7 @@ export default function App() {
 
   // ── Polling — обновляем данные каждые 5 секунд ────────────────────────────
   useEffect(() => {
-    const interval = setInterval(() => { if (me && !isSaving.current) loadAll(); }, 5000);
+    const interval = setInterval(() => { if (me && !isSaving.current && Date.now() - lastSaved.current > 3000) loadAll(); }, 5000);
     return () => clearInterval(interval);
   }, [me, loadAll]);
 
@@ -2325,12 +2326,16 @@ export default function App() {
   }
 
   async function saveUsersBatch(usersList) {
-    isSaving.current = true; // останавливаем polling на время сохранения
+    isSaving.current = true;
     try {
       await Promise.all(usersList.map(u => saveUserToDb(u)));
-      await loadAll();
+      // НЕ вызываем loadAll — данные уже актуальны в React state
+      // loadAll перезапишет state из базы и может сбросить несохранённые изменения
     } catch(e) { console.error("Ошибка batch сохранения:", e); }
-    finally { isSaving.current = false; }
+    finally {
+      lastSaved.current = Date.now(); // запомним когда последний раз сохранили
+      isSaving.current = false;
+    }
   }
 
   async function deleteUserFromDb(id) {
@@ -2340,14 +2345,18 @@ export default function App() {
 
   // ── Обёртка setUsers — сохраняет изменения в Supabase ────────────────────
   const setUsers = fn => {
+    // ВАЖНО: нельзя вызывать async внутри setState — React это ломает.
+    // Сначала получаем текущий state напрямую через ref, потом сохраняем.
     setUsersState(prev => {
       const next = fn(prev);
-      // находим что изменилось и сохраняем батчем (один loadAll в конце)
       const changed = next.filter(u => {
         const old = prev.find(p => p.id === u.id);
         return JSON.stringify(old) !== JSON.stringify(u);
       });
-      if (changed.length > 0) saveUsersBatch(changed);
+      // Запускаем сохранение асинхронно, вне setState
+      if (changed.length > 0) {
+        setTimeout(() => saveUsersBatch(changed), 0);
+      }
       return next;
     });
   };
@@ -2376,13 +2385,14 @@ export default function App() {
   const setTasks = fn => {
     setTasksState(prev => {
       const next = fn(prev);
-      // сохраняем изменённые задачи
+      const toSave = [];
       Object.entries(next).forEach(([mgrId, tList]) => {
         tList.forEach(t => {
           const old = (prev[mgrId] || []).find(p => p.id === t.id);
-          if (JSON.stringify(old) !== JSON.stringify(t)) saveTaskToDb(mgrId, t);
+          if (JSON.stringify(old) !== JSON.stringify(t)) toSave.push([mgrId, t]);
         });
       });
+      if (toSave.length > 0) setTimeout(() => toSave.forEach(([mgrId, t]) => saveTaskToDb(mgrId, t)), 0);
       return next;
     });
   };
@@ -2401,12 +2411,14 @@ export default function App() {
   const setMsgs = fn => {
     setMsgsState(prev => {
       const next = fn(prev);
+      const toSave = [];
       Object.entries(next).forEach(([mgrId, mList]) => {
         mList.forEach(m => {
           const old = (prev[mgrId] || []).find(p => p.id === m.id);
-          if (!old) saveMsgToDb(mgrId, m);
+          if (!old) toSave.push([mgrId, m]);
         });
       });
+      if (toSave.length > 0) setTimeout(() => toSave.forEach(([mgrId, m]) => saveMsgToDb(mgrId, m)), 0);
       return next;
     });
   };
@@ -2430,16 +2442,20 @@ export default function App() {
   const setEvents = fn => {
     setEventsState(prev => {
       const next = fn(prev);
+      const toSave = [];
+      const toDel = [];
       Object.entries(next).forEach(([mgrId, eList]) => {
         eList.forEach(e => {
           const old = (prev[mgrId] || []).find(p => p.id === e.id);
-          if (!old) saveEventToDb(mgrId, e);
+          if (!old) toSave.push([mgrId, e]);
         });
         // удалённые события
         (prev[mgrId] || []).forEach(e => {
-          if (!eList.find(n => n.id === e.id)) deleteEventFromDb(e.id);
+          if (!eList.find(n => n.id === e.id)) toDel.push(e.id);
         });
       });
+      if (toSave.length > 0) setTimeout(() => toSave.forEach(([mgrId, e]) => saveEventToDb(mgrId, e)), 0);
+      if (toDel.length > 0) setTimeout(() => toDel.forEach(id => deleteEventFromDb(id)), 0);
       return next;
     });
   };
