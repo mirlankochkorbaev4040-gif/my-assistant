@@ -5,7 +5,7 @@ import { useState } from "react";
 const B = "#007AFF", G = "#34C759", R = "#FF3B30", O = "#FF9500"; const g1="#F2F2F7", g2="#E5E5EA", g3="#C7C7CC", g4="#8E8E93"; const BG="#F2F2F7", WH="#FFF", SEP="rgba(60,60,67,0.12)";
 const sf = { fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif" };
 
-const MONTHS=["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Се
+const MONTHS = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
 const WD=["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
 const fmtMin = m => m >= 60 ? `${Math.floor(m/60)} ч ${m%60 ? m%60+" мин":""}` :
 
