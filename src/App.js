@@ -1,6 +1,14 @@
 /* eslint-disable */
 import { useState, useEffect, useCallback, useRef } from "react";
 
+// UUID генератор для совместимости с Supabase
+function genId() {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === "x" ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
 // ── SUPABASE через fetch (без библиотеки) ─────────────────────────────────────
 const SUPA_URL = "https://hngwpbfgaiuwnxhzxdxp.supabase.co";
 const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhuZ3dwYmZnYWl1d254aHp4ZHhwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI4NjgzNDQsImV4cCI6MjA4ODQ0NDM0NH0.YTAb-CjVIAeBMaoYzL1jrB_xZ7zdV6EMd-iGUMCohGo";
@@ -230,7 +238,7 @@ function CalendarBlock({events, setEvents, mgrId, role}) {
 
   function addEvent() {
     if (!form.title) return;
-    const ev = {id:Date.now(), date:ds(sel), time:form.time||"00:00", title:form.title, type:form.type, by:role};
+    const ev = {id:genId(), date:ds(sel), time:form.time||"00:00", title:form.title, type:form.type, by:role};
     setEvents(p => ({...p, [mgrId]: [...(p[mgrId]||[]), ev]}));
     setForm({title:"",time:"",type:"meeting"});
     setAdding(false);
@@ -593,7 +601,7 @@ function ChatBlock({messages, setMessages, mgrId, myRole, peer, onSend}) {
   function send() {
     if (!text.trim() && !attached) return;
     const msg = {
-      id: Date.now(),
+      id: genId(),
       from: myRole,
       text,
       time: new Date().toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"}),
@@ -1049,7 +1057,7 @@ function TasksBlock({tasks, setTasks, mgrId, myRole, onNewTask}) {
   }
   function addTask() {
     if (!form.title || !form.deadline || !form.er) return;
-    const t = {id:Date.now(), title:form.title, desc:form.desc, deadline:form.deadline,
+    const t = {id:genId(), title:form.title, desc:form.desc, deadline:form.deadline,
                priority:form.priority, er:form.er, status:"new",
                photo:form.photo||null, link:form.link||null,
                rating:null, rc:null, saved:null, files:[]};
@@ -1627,7 +1635,7 @@ function AdminPanel({users, setUsers, tasks}) {
         return u;
       }));
     } else {
-      const id = "mgr"+Date.now();
+      const id = genId();
       const nu = {id, role:"manager", initials, ...form, subDays:sub,
         info:"", about:"", likes:"", dislikes:"", accesses:[], files:[], active:true};
       // Один setUsers вызов: добавляем клиента И обновляем ассистента
@@ -1654,7 +1662,7 @@ function AdminPanel({users, setUsers, tasks}) {
     if (sel) {
       setUsers(p => p.map(u => u.id===sel.id ? {...u,...form,initials,ratePerClient:rate} : u));
     } else {
-      const id = "ast"+Date.now();
+      const id = genId();
       setUsers(p => [...p, {id,role:"assistant",initials,...form,ratePerClient:rate,clients:[],active:true}]);
     }
     setModal(null);
@@ -2332,21 +2340,18 @@ export default function App() {
 
   // ── Сохранение пользователя в Supabase ────────────────────────────────────
   async function saveUserToDb(u) {
-    try {
-      await db.upsert("users", {
-        id: u.id, role: u.role, name: u.name, initials: u.initials,
-        color: u.color, login: u.login, pw: u.pw,
-        clients: u.clients || [],
-        ast_id: u.astId || null,
-        sub_days: u.subDays ?? 30,
-        rate_per_client: u.ratePerClient ?? 90000,
-        info: u.info || "", about: u.about || "",
-        likes: u.likes || "", dislikes: u.dislikes || "",
-        accesses: u.accesses || [], files: u.files || [],
-        active: u.active !== false,
-      });
-      // НЕ вызываем loadAll() здесь — это вызывало race condition
-    } catch(e) { console.error("Ошибка сохранения пользователя:", e); }
+    await db.upsert("users", {
+      id: u.id, role: u.role, name: u.name, initials: u.initials,
+      color: u.color, login: u.login, pw: u.pw,
+      clients: u.clients || [],
+      ast_id: u.astId || null,
+      sub_days: u.subDays ?? 30,
+      rate_per_client: u.ratePerClient ?? 90000,
+      info: u.info || "", about: u.about || "",
+      likes: u.likes || "", dislikes: u.dislikes || "",
+      accesses: u.accesses || [], files: u.files || [],
+      active: u.active !== false,
+    });
   }
 
   async function saveUsersBatch(usersList) {
@@ -2354,9 +2359,15 @@ export default function App() {
     lastSaved.current = Date.now();
     try {
       await Promise.all(usersList.map(u => saveUserToDb(u)));
-      // НЕ перезагружаем из базы — React state уже актуален
-      // Supabase может вернуть данные до подтверждения записи → новый юзер пропадёт
-    } catch(e) { console.error("Ошибка batch сохранения:", e); }
+      // Сохранение прошло успешно — state уже актуален, не перезагружаем
+    } catch(e) {
+      console.error("Ошибка batch сохранения:", e);
+      // Если сохранение упало — восстанавливаем state из базы
+      try {
+        const uData = await db.select("users");
+        setUsersState(uData.map(rowToUser));
+      } catch(e2) { console.error("Ошибка восстановления:", e2); }
+    }
     finally {
       lastSaved.current = Date.now();
       isSaving.current = false;
