@@ -2354,9 +2354,8 @@ export default function App() {
     lastSaved.current = Date.now();
     try {
       await Promise.all(usersList.map(u => saveUserToDb(u)));
-      // После успешного сохранения — перезагружаем только users для синхронизации
-      const uData = await db.select("users");
-      setUsersState(uData.map(rowToUser));
+      // НЕ перезагружаем из базы — React state уже актуален
+      // Supabase может вернуть данные до подтверждения записи → новый юзер пропадёт
     } catch(e) { console.error("Ошибка batch сохранения:", e); }
     finally {
       lastSaved.current = Date.now();
@@ -2422,15 +2421,7 @@ export default function App() {
         lastSaved.current = Date.now();
         setTimeout(async () => {
           await Promise.all(toSave.map(([mgrId, t]) => saveTaskToDb(mgrId, t)));
-          // После сохранения перезагружаем только tasks
-          const tData = await db.select("tasks");
-          const tasksMap = {};
-          tData.forEach(r => {
-            if (!tasksMap[r.mgr_id]) tasksMap[r.mgr_id] = [];
-            tasksMap[r.mgr_id].push(rowToTask(r));
-          });
-          setTasksState(tasksMap);
-          lastSaved.current = Date.now();
+          // НЕ перезагружаем из базы — React state уже актуален
         }, 0);
       }
       return next;
