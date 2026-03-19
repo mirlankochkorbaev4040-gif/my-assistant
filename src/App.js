@@ -1889,6 +1889,12 @@ function AdminPanel({users, setUsers, tasks}) {
                       ⚡ Заменить ассистента ({clients.length} клиентов)
                     </button>
                   )}
+                  <button onClick={()=>setConfirmDeleteUser({id:ast.id,name:ast.name,role:"ассистента"})}
+                    style={{...sf,width:"100%",marginTop:8,background:"rgba(255,59,48,0.07)",
+                      border:"1.5px solid rgba(255,59,48,0.2)",borderRadius:10,padding:"10px",
+                      cursor:"pointer",fontSize:13,color:R,fontWeight:600}}>
+                    🗑 Удалить ассистента
+                  </button>
                 </div>
               </div>
             );
@@ -2034,7 +2040,7 @@ function AdminPanel({users, setUsers, tasks}) {
       {/* ── МОДАЛКА: удаление пользователя ── */}
       {confirmDeleteUser && (
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",
-          display:"flex",alignItems:"center",justifyContent:"center",zIndex:300,padding:20}}>
+          display:"flex",alignItems:"center",justifyContent:"center",zIndex:500,padding:20}}>
           <div style={{background:WH,borderRadius:20,padding:28,width:"100%",maxWidth:340,textAlign:"center",
             boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
             <div style={{fontSize:48,marginBottom:12}}>🗑</div>
@@ -2208,8 +2214,6 @@ function AdminPanel({users, setUsers, tasks}) {
                 ))}
               </div>
             </>}
-            <div style={{...sf,fontSize:11,color:g4,fontWeight:600,textTransform:"uppercase",marginBottom:6}}>Зарплата за клиента (₸)</div>
-            <input type="number" value={form.ratePerClient} onChange={e=>setForm({...form,ratePerClient:e.target.value})} placeholder="90000" style={{...inp,marginBottom:18}}/>
             <div style={{...sf,fontSize:11,color:g4,fontWeight:600,textTransform:"uppercase",marginBottom:10}}>Цвет</div>
             <div style={{display:"flex",gap:10,marginBottom:22}}>
               {COLORS_LIST.map(col=>(
@@ -2257,8 +2261,6 @@ function AdminPanel({users, setUsers, tasks}) {
                 <input value={form.pw} onChange={e=>setForm({...form,pw:e.target.value})} placeholder="Пароль" style={inp}/>
               </div>
             </div>
-            <div style={{...sf,fontSize:11,color:g4,fontWeight:600,textTransform:"uppercase",marginBottom:6}}>Зарплата за клиента (₸)</div>
-            <input type="number" value={form.ratePerClient} onChange={e=>setForm({...form,ratePerClient:e.target.value})} placeholder="90000" style={{...inp,marginBottom:18}}/>
             <div style={{...sf,fontSize:11,color:g4,fontWeight:600,textTransform:"uppercase",marginBottom:10}}>Цвет</div>
             <div style={{display:"flex",gap:10,marginBottom:22}}>
               {COLORS_LIST.map(col=>(
@@ -2266,6 +2268,21 @@ function AdminPanel({users, setUsers, tasks}) {
                   style={{width:34,height:34,borderRadius:"50%",background:col,border:"none",cursor:"pointer",
                     boxShadow:form.color===col?`0 0 0 3px white, 0 0 0 5px ${col}`:"none",transition:"box-shadow .15s"}}/>
               ))}
+            </div>
+            <div style={{...sf,fontSize:11,color:g4,fontWeight:600,textTransform:"uppercase",marginBottom:8}}>Ставка за клиента (₸)</div>
+            <div style={{...sf,fontSize:11,color:g4,marginBottom:8}}>Ассистент может вести до 3 клиентов</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
+              {["1-й клиент","2-й клиент","3-й клиент"].map((lbl,i)=>(
+                <div key={i}>
+                  <div style={{...sf,fontSize:10,color:g4,marginBottom:4}}>{lbl}</div>
+                  <input type="number" value={form.ratePerClient||90000}
+                    onChange={e=>setForm({...form,ratePerClient:e.target.value})}
+                    placeholder="90000" style={inp}/>
+                </div>
+              ))}
+            </div>
+            <div style={{...sf,fontSize:12,color:g4,marginBottom:18,padding:"8px 10px",background:g1,borderRadius:10}}>
+              Макс. за 3 клиентов: <b style={{color:B}}>{((parseInt(form.ratePerClient)||90000)*3).toLocaleString("ru")} ₸/мес</b>
             </div>
             <div style={{display:"flex",gap:10}}>
               <button onClick={saveAst} disabled={!form.name||!form.login||!form.pw}
@@ -2290,7 +2307,7 @@ function AdminPanel({users, setUsers, tasks}) {
  
 // ── ГЛАВНОЕ ПРИЛОЖЕНИЕ ────────────────────────────────────────────────────────
  
-// ── CEO ПАНЕЛЬ ──────────────────────────────────────────────────────────────
+// ── CEO ПАНЕЛЬ ──
 // ── ДИЗАЙН-СИСТЕМА ────────────────────────────────────────────────────────────
 const csf = { fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif" };
 const C = {
@@ -3600,7 +3617,6 @@ export default function App() {
       const first = (u.clients||[])[0] || null;
       setCurMgr(first); setChatMgr(first);
     }
-    // CEO — ничего дополнительного не нужно, рендерится CEOView
   }
   function doLogout() { setMe(null); }
  
@@ -3645,15 +3661,13 @@ export default function App() {
   }
  
   // ── Залогинен ─────────────────────────────────────────────────────────────
-  const isAdmin = me.role==="admin";
-  // обновляем me из свежих данных (нужно до любых проверок ролей)
   const freshMe = users.find(u => u.id === me.id) || me;
  
+  const isAdmin = me.role==="admin";
   const isCeo   = me.role==="ceo";
   const isMgr   = me.role==="manager";
   const isAst   = me.role==="assistant";
  
-  // ── СЕО — отдельный интерфейс ─────────────────────────────────────────────
   if (isCeo) {
     return (
       <div style={{height:"100vh",background:C.bg}}>
@@ -3662,6 +3676,8 @@ export default function App() {
       </div>
     );
   }
+ 
+  // обновляем me из свежих данных — объявлен выше
  
   const astClients = isAst ? users.filter(u => u.role==="manager" && (freshMe.clients||[]).includes(u.id)) : [];
   const activeMgrId  = isMgr ? freshMe.id : curMgr;
