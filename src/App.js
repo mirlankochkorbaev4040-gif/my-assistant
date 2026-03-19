@@ -2208,6 +2208,8 @@ function AdminPanel({users, setUsers, tasks}) {
                 ))}
               </div>
             </>}
+            <div style={{...sf,fontSize:11,color:g4,fontWeight:600,textTransform:"uppercase",marginBottom:6}}>Зарплата за клиента (₸)</div>
+            <input type="number" value={form.ratePerClient} onChange={e=>setForm({...form,ratePerClient:e.target.value})} placeholder="90000" style={{...inp,marginBottom:18}}/>
             <div style={{...sf,fontSize:11,color:g4,fontWeight:600,textTransform:"uppercase",marginBottom:10}}>Цвет</div>
             <div style={{display:"flex",gap:10,marginBottom:22}}>
               {COLORS_LIST.map(col=>(
@@ -2255,6 +2257,8 @@ function AdminPanel({users, setUsers, tasks}) {
                 <input value={form.pw} onChange={e=>setForm({...form,pw:e.target.value})} placeholder="Пароль" style={inp}/>
               </div>
             </div>
+            <div style={{...sf,fontSize:11,color:g4,fontWeight:600,textTransform:"uppercase",marginBottom:6}}>Зарплата за клиента (₸)</div>
+            <input type="number" value={form.ratePerClient} onChange={e=>setForm({...form,ratePerClient:e.target.value})} placeholder="90000" style={{...inp,marginBottom:18}}/>
             <div style={{...sf,fontSize:11,color:g4,fontWeight:600,textTransform:"uppercase",marginBottom:10}}>Цвет</div>
             <div style={{display:"flex",gap:10,marginBottom:22}}>
               {COLORS_LIST.map(col=>(
@@ -3642,6 +3646,9 @@ export default function App() {
  
   // ── Залогинен ─────────────────────────────────────────────────────────────
   const isAdmin = me.role==="admin";
+  // обновляем me из свежих данных (нужно до любых проверок ролей)
+  const freshMe = users.find(u => u.id === me.id) || me;
+ 
   const isCeo   = me.role==="ceo";
   const isMgr   = me.role==="manager";
   const isAst   = me.role==="assistant";
@@ -3655,9 +3662,6 @@ export default function App() {
       </div>
     );
   }
- 
-  // обновляем me из свежих данных
-  const freshMe = users.find(u => u.id === me.id) || me;
  
   const astClients = isAst ? users.filter(u => u.role==="manager" && (freshMe.clients||[]).includes(u.id)) : [];
   const activeMgrId  = isMgr ? freshMe.id : curMgr;
