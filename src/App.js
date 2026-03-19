@@ -1595,7 +1595,7 @@ function WeeklyReportClient({tasks, totalSaved}) {
 // ── АДМИН-ПАНЕЛЬ ─────────────────────────────────────────────────────────────
 const COLORS_LIST = ["#007AFF","#34C759","#FF9500","#AF52DE","#FF2D55","#5AC8FA","#FF6B35","#30D158"];
  
-function AdminPanel({users, setUsers, tasks}) {
+function AdminPanel({users, setUsers, tasks, onDeleteUser}) {
   const [tab,    setTab]    = useState("clients");
   const [modal,  setModal]  = useState(null); // "add_client"|"edit_client"|"add_ast"|"edit_ast"
   const [sel,    setSel]    = useState(null);
@@ -1606,9 +1606,7 @@ function AdminPanel({users, setUsers, tasks}) {
   const [confirmDeleteUser, setConfirmDeleteUser] = useState(null); // {id, name, role}
  
   function deleteUserLocal(id) {
-    setUsers(p => p.filter(u => u.id !== id));
-    // Убираем из clients у ассистентов
-    setUsers(p => p.map(u => u.role==='assistant' ? {...u, clients:(u.clients||[]).filter(c=>c!==id)} : u));
+    if (onDeleteUser) onDeleteUser(id);
     setConfirmDeleteUser(null);
   }
   const [pwMsg,  setPwMsg]  = useState("");
@@ -2646,35 +2644,44 @@ function CEOFinance() {
 }
  
 // ── СЕО — КОМАНДА ─────────────────────────────────────────────────────────────
-function CEOTeam() {
+function CEOTeam({asts}) {
+  const astList = (asts||[]).filter(u=>u.role==="assistant");
   return (
     <div>
       <SectionLabel>Ассистенты · Last seen</SectionLabel>
-      {ASSISTANTS_DATA.map(a=>{
-        const ls=lastSeen(a.lastSeen);
-        const offline=Date.now()-a.lastSeen>2*60*60000;
-        const lowR=a.avgRating&&a.avgRating<4.0;
+      {astList.length===0&&<div style={{...csf,fontSize:13,color:C.gray,padding:"20px 0",textAlign:"center"}}>Ассистенты не добавлены</div>}
+      {astList.map(a=>{
+        const aExt = {
+          ...a,
+          clients: (asts||[]).filter(u=>u.role==="manager"&&(u.astId===aExt.id||(aExt.clients||[]).includes(u.id))).length,
+          tasksDone: 0,
+          avgRating: aExt.avgRating||null,
+          lastSeen: aExt.lastSeen||Date.now()-60*60000,
+        };
+        const ls=lastSeen(aExt.lastSeen);
+        const offline=Date.now()-aExt.lastSeen>2*60*60000;
+        const lowR=aExt.avgRating&&aExt.avgRating<4.0;
         return(
-          <Card key={a.id} style={{marginBottom:10,overflow:"hidden",opacity:a.clients===0?0.55:1}}>
-            <div style={{height:3,background:offline&&a.clients>0?C.red:lowR?C.orange:C.blue}}/>
+          <Card key={aExt.id} style={{marginBottom:10,overflow:"hidden",opacity:aExt.clients===0?0.55:1}}>
+            <div style={{height:3,background:offline&&aExt.clients>0?C.red:lowR?C.orange:C.blue}}/>
             <div style={{padding:"14px 16px"}}>
               <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:12}}>
                 <div style={{position:"relative"}}>
-                  <div style={{width:46,height:46,borderRadius:"50%",background:C.lblue,color:C.blue,display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,fontWeight:800,...sf}}>{a.name[0]}</div>
+                  <div style={{width:46,height:46,borderRadius:"50%",background:C.lblue,color:C.blue,display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,fontWeight:800,...sf}}>{aExt.name[0]}</div>
                   <div style={{position:"absolute",bottom:1,right:1,width:12,height:12,borderRadius:"50%",background:ls.c,border:"2px solid "+C.white}}/>
                 </div>
                 <div style={{flex:1}}>
-                  <div style={{...csf,fontSize:15,fontWeight:700,color:C.navy}}>{a.name}</div>
+                  <div style={{...csf,fontSize:15,fontWeight:700,color:C.navy}}>{aExt.name}</div>
                   <div style={{...csf,fontSize:12,color:ls.c,fontWeight:600}}>● {ls.t}</div>
                 </div>
                 <div style={{textAlign:"right"}}>
-                  {a.avgRating&&<div style={{...csf,fontSize:15,fontWeight:800,color:a.avgRating>=4?C.green:a.avgRating>=3?C.orange:C.red}}>★ {a.avgRating}</div>}
-                  {offline&&a.clients>0&&<Badge label="2ч+" color={C.red}/>}
+                  {aExt.avgRating&&<div style={{...csf,fontSize:15,fontWeight:800,color:aExt.avgRating>=4?C.green:aExt.avgRating>=3?C.orange:C.red}}>★ {aExt.avgRating}</div>}
+                  {offline&&aExt.clients>0&&<Badge label="2ч+" color={C.red}/>}
                   {lowR&&<Badge label="Низкий рейтинг" color={C.orange}/>}
                 </div>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
-                {[{l:"Клиентов",v:a.clients},{l:"Выполнено",v:a.tasksDone},{l:"Рейтинг",v:a.avgRating?"★ "+a.avgRating:"—"}].map((m,i)=>(
+                {[{l:"Клиентов",v:aExt.clients},{l:"Выполнено",v:aExt.tasksDone},{l:"Рейтинг",v:aExt.avgRating?"★ "+aExt.avgRating:"—"}].map((m,i)=>(
                   <div key={i} style={{background:C.lgray,borderRadius:10,padding:"8px",textAlign:"center"}}>
                     <div style={{...csf,fontSize:18,fontWeight:800,color:C.blue}}>{m.v}</div>
                     <div style={{...csf,fontSize:9,color:C.gray,marginTop:2,textTransform:"uppercase"}}>{m.l}</div>
@@ -3087,7 +3094,7 @@ function CEOView({user,onLogout,salMonths,setSalMonths,asts}) {
         </Header>
         <div style={{padding:"16px 14px"}}>
           {tab==="finance"&&<CEOFinance/>}
-          {tab==="team"&&<CEOTeam/>}
+          {tab==="team"&&<CEOTeam asts={asts}/>}
           {tab==="salary"&&<CEOSalary months={salMonths} setMonths={setSalMonths}/>}
           {tab==="crm"&&<CEOCRM/>}
         </div>
@@ -3763,7 +3770,7 @@ export default function App() {
         <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column"}}>
  
           {/* ── АДМИН ── */}
-          {isAdmin && <AdminPanel users={users} setUsers={setUsers} tasks={tasks}/>}
+          {isAdmin && <AdminPanel users={users} setUsers={setUsers} tasks={tasks} onDeleteUser={id=>{setUsers(p=>p.filter(u=>u.id!==id));deleteUserFromDb(id);}}/>}
  
           {/* ── КЛИЕНТ / АССИСТЕНТ — ГЛАВНАЯ ── */}
           {!isAdmin && tab==="home" && (
