@@ -1604,6 +1604,13 @@ function AdminPanel({users, setUsers, tasks}) {
   const [pwForm, setPwForm] = useState({cur:"", next:"", next2:""});
   const [replaceModal, setReplaceModal] = useState(null); // astId которого заменяем
   const [confirmDeleteUser, setConfirmDeleteUser] = useState(null); // {id, name, role}
+ 
+  function deleteUserLocal(id) {
+    setUsers(p => p.filter(u => u.id !== id));
+    // Убираем из clients у ассистентов
+    setUsers(p => p.map(u => u.role==='assistant' ? {...u, clients:(u.clients||[]).filter(c=>c!==id)} : u));
+    setConfirmDeleteUser(null);
+  }
   const [pwMsg,  setPwMsg]  = useState("");
  
   const assistants = users.filter(u => u.role==="assistant");
@@ -2054,7 +2061,7 @@ function AdminPanel({users, setUsers, tasks}) {
                   padding:"13px",fontSize:14,color:g4,cursor:"pointer",fontWeight:600}}>
                 Отмена
               </button>
-              <button onClick={()=>deleteUser(confirmDeleteUser.id)}
+              <button onClick={()=>deleteUserLocal(confirmDeleteUser.id)}
                 style={{...sf,flex:1,background:R,border:"none",borderRadius:12,
                   padding:"13px",fontSize:14,color:"#fff",cursor:"pointer",fontWeight:700}}>
                 Удалить
@@ -2269,21 +2276,36 @@ function AdminPanel({users, setUsers, tasks}) {
                     boxShadow:form.color===col?`0 0 0 3px white, 0 0 0 5px ${col}`:"none",transition:"box-shadow .15s"}}/>
               ))}
             </div>
-            <div style={{...sf,fontSize:11,color:g4,fontWeight:600,textTransform:"uppercase",marginBottom:8}}>Ставка за клиента (₸)</div>
-            <div style={{...sf,fontSize:11,color:g4,marginBottom:8}}>Ассистент может вести до 3 клиентов</div>
+            <div style={{...sf,fontSize:11,color:g4,fontWeight:600,textTransform:"uppercase",marginBottom:8}}>Ставка за каждого клиента (₸)</div>
+            <div style={{...sf,fontSize:11,color:g4,marginBottom:10}}>Заполни только те строки, сколько клиентов ведёт ассистент</div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
               {["1-й клиент","2-й клиент","3-й клиент"].map((lbl,i)=>(
                 <div key={i}>
                   <div style={{...sf,fontSize:10,color:g4,marginBottom:4}}>{lbl}</div>
-                  <input type="number" value={form.ratePerClient||90000}
-                    onChange={e=>setForm({...form,ratePerClient:e.target.value})}
-                    placeholder="90000" style={inp}/>
+                  <input type="number"
+                    value={form[`rate${i}`]!==undefined ? form[`rate${i}`] : (i===0 ? (form.ratePerClient||"") : "")}
+                    onChange={e=>{
+                      const val = e.target.value;
+                      const updated = {...form, [`rate${i}`]: val};
+                      if(i===0) updated.ratePerClient = val;
+                      setForm(updated);
+                    }}
+                    placeholder={i===0?"90000":"(не заполнено)"} style={inp}/>
                 </div>
               ))}
             </div>
-            <div style={{...sf,fontSize:12,color:g4,marginBottom:18,padding:"8px 10px",background:g1,borderRadius:10}}>
-              Макс. за 3 клиентов: <b style={{color:B}}>{((parseInt(form.ratePerClient)||90000)*3).toLocaleString("ru")} ₸/мес</b>
-            </div>
+            {(()=>{
+              const r0 = parseInt(form.rate0||form.ratePerClient)||0;
+              const r1 = parseInt(form.rate1)||0;
+              const r2 = parseInt(form.rate2)||0;
+              const total = r0+r1+r2;
+              const filled = [r0,r1,r2].filter(x=>x>0).length;
+              return total>0?(
+                <div style={{...sf,fontSize:12,color:g4,marginBottom:18,padding:"8px 10px",background:g1,borderRadius:10}}>
+                  {filled} клиент(а): итого <b style={{color:B}}>{total.toLocaleString("ru")} ₸/мес</b>
+                </div>
+              ):<div style={{marginBottom:18}}/>;
+            })()}
             <div style={{display:"flex",gap:10}}>
               <button onClick={saveAst} disabled={!form.name||!form.login||!form.pw}
                 style={{...sf,flex:1,background:(!form.name||!form.login||!form.pw)?g2:B,
