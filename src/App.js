@@ -1056,7 +1056,7 @@ function TasksBlock({tasks, setTasks, mgrId, myRole, onNewTask}) {
     setConfirmDelete(null);
   }
   function addTask() {
-    if (!form.title || !form.deadline || !form.er) return;
+    if (!form.title || !form.deadline) return;
     const t = {id:genId(), title:form.title, desc:form.desc, deadline:form.deadline,
                priority:form.priority, er:form.er, status:"new",
                photo:form.photo||null, link:form.link||null,
@@ -1381,7 +1381,7 @@ function TasksBlock({tasks, setTasks, mgrId, myRole, onNewTask}) {
       {adding && (
         <div style={{background:WH,borderRadius:18,padding:16,boxShadow:"0 2px 16px rgba(0,0,0,0.10)"}}>
           <div style={{...sf,fontSize:17,fontWeight:700,marginBottom:14}}>Новая задача</div>
-          {[["Задача *","title","Что нужно сделать?"],["Ожидаемый результат *","er","Что должно получиться?"]].map(([lbl,k,ph])=>(
+          {[["Задача *","title","Что нужно сделать?"],["Ожидаемый результат","er","Что должно получиться? (необязательно)"]].map(([lbl,k,ph])=>(
             <div key={k} style={{marginBottom:10}}>
               <div style={{...sf,fontSize:11,color:g4,fontWeight:600,textTransform:"uppercase",marginBottom:5}}>{lbl}</div>
               <input value={form[k]} onChange={e=>setForm({...form,[k]:e.target.value})} placeholder={ph}
@@ -1454,10 +1454,10 @@ function TasksBlock({tasks, setTasks, mgrId, myRole, onNewTask}) {
           </div>
           <div style={{display:"flex",gap:8}}>
             <button onClick={addTask}
-              disabled={!form.title||!form.deadline||!form.er}
+              disabled={!form.title||!form.deadline}
               style={{...sf,flex:1,
-                background:(!form.title||!form.deadline||!form.er)?g2:B,
-                color:(!form.title||!form.deadline||!form.er)?g3:"#fff",
+                background:(!form.title||!form.deadline)?g2:B,
+                color:(!form.title||!form.deadline)?g3:"#fff",
                 border:"none",borderRadius:12,padding:"13px",fontSize:15,fontWeight:600,cursor:"pointer"}}>
               Поставить задачу
             </button>
@@ -3386,11 +3386,28 @@ export default function App() {
   const [tasks,        setTasksState]   = useState({});
   const [msgs,         setMsgsState]    = useState({});
   const [events,       setEventsState]  = useState({});
-  const [me,           setMe]           = useState(null);
+  // ── Сессия: восстанавливаем из localStorage при обновлении ──────────────
+  const [me,           setMeState]      = useState(() => {
+    try { const s = localStorage.getItem("ma_me"); return s ? JSON.parse(s) : null; } catch { return null; }
+  });
+  const setMe = (u) => {
+    if (u) localStorage.setItem("ma_me", JSON.stringify(u));
+    else localStorage.removeItem("ma_me");
+    setMeState(u);
+  };
   const [tab,          setTab]          = useState("home");
   const [curMgr,       setCurMgr]       = useState(null);
   const [chatMgr,      setChatMgr]      = useState(null);
-  const [acknowledged, setAcknowledged] = useState({});
+  const [acknowledged, setAcknowledged] = useState(() => {
+    try { const s = localStorage.getItem("ma_ack"); return s ? JSON.parse(s) : {}; } catch { return {}; }
+  });
+  const setAck = (fn) => {
+    setAcknowledged(prev => {
+      const next = typeof fn === "function" ? fn(prev) : fn;
+      try { localStorage.setItem("ma_ack", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
   const [unreadMsgs,   setUnreadMsgs]   = useState({});
   const [newTasksNotif,setNewTasksNotif]= useState({});
   const [loading,      setLoading]      = useState(true);
@@ -3449,10 +3466,20 @@ export default function App() {
       if (!me || isSaving.current) return;
       if (Date.now() - lastSaved.current < 5000) return; // пауза 5 сек после сохранения
       try {
-        const [mData, eData] = await Promise.all([
+        const [tData, mData, eData] = await Promise.all([
+          db.select("tasks"),
           db.select("messages"),
           db.select("events"),
         ]);
+ 
+        // Обновляем задачи
+        const tasksMap = {};
+        tData.forEach(r => {
+          if (!tasksMap[r.mgr_id]) tasksMap[r.mgr_id] = [];
+          tasksMap[r.mgr_id].push(rowToTask(r));
+        });
+        setTasksState(tasksMap);
+ 
         const msgsMap = {};
         mData.forEach(r => {
           if (!msgsMap[r.mgr_id]) msgsMap[r.mgr_id] = [];
@@ -3930,7 +3957,7 @@ export default function App() {
                   <ProfileBlock
                     mgr={activeMgrObj} setUsers={setUsers} canEdit={true}
                     isNewAssistant={isAst && !acknowledged[activeMgrId]}
-                    onAcknowledge={()=>setAcknowledged(p=>({...p,[activeMgrId]:true}))}
+                    onAcknowledge={()=>setAck(p=>({...p,[activeMgrId]:true}))}
                   />
                 </div>
               )}
