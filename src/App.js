@@ -3584,22 +3584,45 @@ export default function App() {
   }
  
   const setTasks = fn => {
+    // Блокируем polling ДО вызова setState — чтобы он не успел стереть задачу
+    isSaving.current = true;
+    lastSaved.current = Date.now();
+ 
     setTasksState(prev => {
       const next = fn(prev);
       const toSave = [];
-      Object.entries(next).forEach(([mgrId, tList]) => {
+      Object.entries(next).forEach(([mId, tList]) => {
         tList.forEach(t => {
-          const old = (prev[mgrId] || []).find(p => p.id === t.id);
-          if (JSON.stringify(old) !== JSON.stringify(t)) toSave.push([mgrId, t]);
+          const old = (prev[mId] || []).find(p => p.id === t.id);
+          if (JSON.stringify(old) !== JSON.stringify(t)) toSave.push([mId, t]);
         });
       });
+ 
       if (toSave.length > 0) {
-        lastSaved.current = Date.now();
-        setTimeout(async () => {
-          await Promise.all(toSave.map(([mgrId, t]) => saveTaskToDb(mgrId, t)));
-          // НЕ перезагружаем из базы — React state уже актуален
-        }, 0);
+        // Сохраняем в DB асинхронно
+        (async () => {
+          try {
+            await Promise.all(toSave.map(([mId, t]) => saveTaskToDb(mId, t)));
+            // После успешного сохранения — перечитываем из DB
+            const tData = await db.select("tasks");
+            const tasksMap = {};
+            tData.forEach(r => {
+              if (!tasksMap[r.mgr_id]) tasksMap[r.mgr_id] = [];
+              tasksMap[r.mgr_id].push(rowToTask(r));
+            });
+            setTasksState(tasksMap);
+          } catch(e) {
+            console.error("Ошибка сохранения задачи:", e);
+          } finally {
+            isSaving.current = false;
+            lastSaved.current = Date.now();
+          }
+        })();
+      } else {
+        // Нет изменений — снимаем блокировку
+        isSaving.current = false;
       }
+ 
       return next;
     });
   };
