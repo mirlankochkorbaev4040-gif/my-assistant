@@ -3437,7 +3437,23 @@ export default function App() {
         if (!tasksMap[r.mgr_id]) tasksMap[r.mgr_id] = [];
         tasksMap[r.mgr_id].push(rowToTask(r));
       });
+      // Если в DB нет задач — восстанавливаем из localStorage
+      if (tData.length === 0) {
+        try {
+          const cached = localStorage.getItem("ma_tasks");
+          if (cached) {
+            const cachedMap = JSON.parse(cached);
+            setTasksState(cachedMap);
+            // Пробуем сохранить все задачи из кэша в DB
+            Object.entries(cachedMap).forEach(([mId, tList]) => {
+              tList.forEach(t => saveTask(mId, t));
+            });
+            return;
+          }
+        } catch {}
+      }
       setTasksState(tasksMap);
+      try { localStorage.setItem("ma_tasks", JSON.stringify(tasksMap)); } catch {}
  
       const msgsMap = {};
       mData.forEach(r => {
@@ -3468,7 +3484,7 @@ export default function App() {
     // Users и tasks НЕ перезагружаем — они уже актуальны в state после сохранения
     const interval = setInterval(async () => {
       if (!me || isSaving.current) return;
-      if (Date.now() - lastSaved.current < 5000) return; // пауза 5 сек после сохранения
+      if (Date.now() - lastSaved.current < 15000) return; // пауза 15 сек после сохранения
       try {
         const [tData, mData, eData] = await Promise.all([
           db.select("tasks"),
@@ -3476,13 +3492,30 @@ export default function App() {
           db.select("events"),
         ]);
  
-        // Обновляем задачи
-        const tasksMap = {};
+        // Обновляем задачи — мержим с текущим state
+        // Если задача есть в state но нет в DB (не сохранилась) — оставляем её
+        const dbTasksMap = {};
         tData.forEach(r => {
-          if (!tasksMap[r.mgr_id]) tasksMap[r.mgr_id] = [];
-          tasksMap[r.mgr_id].push(rowToTask(r));
+          if (!dbTasksMap[r.mgr_id]) dbTasksMap[r.mgr_id] = [];
+          dbTasksMap[r.mgr_id].push(rowToTask(r));
         });
-        setTasksState(tasksMap);
+        setTasksState(prev => {
+          // Берём DB как основу, добавляем задачи из state которых нет в DB (status "new" - только что созданные)
+          const merged = { ...dbTasksMap };
+          Object.entries(prev).forEach(([mId, tList]) => {
+            tList.forEach(t => {
+              const inDb = (dbTasksMap[mId]||[]).find(d => d.id === t.id);
+              if (!inDb && t.status === "new") {
+                // Задача есть в state но не в DB — сохраняем повторно
+                if (!merged[mId]) merged[mId] = [];
+                merged[mId].push(t);
+                // Пробуем сохранить снова
+                saveTask(mId, t);
+              }
+            });
+          });
+          return merged;
+        });
  
         const msgsMap = {};
         mData.forEach(r => {
@@ -3588,7 +3621,13 @@ export default function App() {
   }
  
   // setTasks — чистый React setter, без async/DB
-  const setTasks = fn => { setTasksState(fn); };
+  const setTasks = fn => {
+    setTasksState(prev => {
+      const next = typeof fn === "function" ? fn(prev) : fn;
+      try { localStorage.setItem("ma_tasks", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
  
   // Сохранить задачу в DB и перечитать state из DB
   const saveTask = async (mgrId, task) => {
@@ -3605,6 +3644,8 @@ export default function App() {
       setTasksState(tasksMap);
     } catch(e) {
       console.error("Ошибка сохранения задачи:", e);
+      // Задача осталась в UI state — попробуем сохранить ещё раз через 3 сек
+      setTimeout(() => { saveTask(mgrId, task); }, 3000);
     } finally {
       isSaving.current = false;
       lastSaved.current = Date.now();
