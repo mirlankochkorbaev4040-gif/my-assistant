@@ -27,9 +27,9 @@ const db = {
    return r.json();
  },
  async upsert(table, row) {
-   // Убеждаемся что передаём одиночный объект, не массив
    const body = Array.isArray(row) ? row : [row];
-   const r = await fetch(`${SUPA_URL}/rest/v1/${table}`, {
+   // on_conflict=id — явно указываем конфликт по PRIMARY KEY
+   const r = await fetch(`${SUPA_URL}/rest/v1/${table}?on_conflict=id`, {
      method: "POST",
      headers: { ...headers, "Prefer": "resolution=merge-duplicates,return=representation" },
      body: JSON.stringify(body),
@@ -3430,13 +3430,19 @@ export default function App() {
  };
  // ── Сохранение задачи ─────────────────────────────────────────────────────
  async function saveTaskToDb(mgrId, task) {
+   const taskId = String(task.id);
    const row = {
-     id: String(task.id), mgr_id: mgrId,
-     title: task.title, description: task.desc || "",
-     deadline: task.deadline, priority: task.priority || "medium",
-     er: task.er || "", status: task.status || "new",
-     rating: task.rating || null, rc: task.rc || null,
-     saved: task.saved || null, result: task.result || "",
+     id: taskId, mgr_id: String(mgrId),
+     title: task.title || "",
+     description: task.desc || "",
+     deadline: task.deadline || "",
+     priority: task.priority || "medium",
+     er: task.er || "",
+     status: task.status || "new",
+     rating: task.rating || null,
+     rc: task.rc || null,
+     saved: task.saved || null,
+     result: task.result || "",
      help_comment: task.helpComment || "",
      mgr_reply: task.mgrReply || "",
      files: task.files || [],
@@ -3445,16 +3451,29 @@ export default function App() {
      result_photo: task.resultPhoto || null,
      result_link: task.resultLink || null,
    };
-   // Retry 3 раза — сеть может быть нестабильной
+   // Попытка 1: upsert (INSERT или UPDATE)
    for (let attempt = 1; attempt <= 3; attempt++) {
      try {
        await db.upsert("tasks", row);
-       return; // успех
+       console.log("✅ Задача сохранена в DB:", taskId);
+       return;
      } catch(e) {
-       console.error(`saveTaskToDb attempt ${attempt} failed:`, e);
-       if (attempt < 3) await new Promise(r => setTimeout(r, 1000 * attempt));
+       const msg = e.message || "";
+       console.error(`saveTaskToDb attempt ${attempt} failed (${msg})`);
+       // Если 409 конфликт — пробуем PATCH вместо INSERT
+       if (msg.includes("409") || msg.includes("duplicate") || msg.includes("unique")) {
+         try {
+           await db.patch("tasks", taskId, row);
+           console.log("✅ Задача обновлена через PATCH:", taskId);
+           return;
+         } catch(e2) {
+           console.error("PATCH тоже упал:", e2);
+         }
+       }
+       if (attempt < 3) await new Promise(r => setTimeout(r, 800 * attempt));
      }
    }
+   console.error("❌ Не удалось сохранить задачу после 3 попыток:", taskId);
  }
  // setTasks — чистый React setter, без async/DB
  const setTasks = fn => {
