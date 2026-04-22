@@ -700,8 +700,18 @@ function AiCheck({task, onDone}) {
   const [aiPlan,   setAiPlan]   = useState(null);
   const [planLoading, setPlanLoading] = useState(false);
  
-  // Синхронизируем result с task.result
-  useState(() => { setResult(task.result||""); }, [task.result]);
+  // Синхронизируем result с task.result при изменении задачи
+  useEffect(() => { setResult(task.result||""); }, [task.result]);
+ 
+  // Автосохранение с debounce 800мс
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (result !== (task.result||"")) {
+        onDone(result);
+      }
+    }, 800);
+    return () => clearTimeout(timeout);
+  }, [result]);
  
   async function loadPlan() {
     if (aiPlan) return;
@@ -3492,25 +3502,32 @@ export default function App() {
           db.select("events"),
         ]);
  
-        // Обновляем задачи — мержим с текущим state
-        // Если задача есть в state но нет в DB (не сохранилась) — оставляем её
+        // Обновляем задачи из DB
         const dbTasksMap = {};
         tData.forEach(r => {
           if (!dbTasksMap[r.mgr_id]) dbTasksMap[r.mgr_id] = [];
           dbTasksMap[r.mgr_id].push(rowToTask(r));
         });
         setTasksState(prev => {
-          // Берём DB как основу, добавляем задачи из state которых нет в DB (status "new" - только что созданные)
-          const merged = { ...dbTasksMap };
+          // БЕЗОПАСНЫЙ МЕРЖ: DB + задачи из state которых ещё нет в DB
+          const merged = {};
+          // Сначала берём всё из DB
+          Object.entries(dbTasksMap).forEach(([mId, tList]) => {
+            merged[mId] = [...tList];
+          });
+          // Добавляем задачи из prev state которых нет в DB (ещё не сохранились)
           Object.entries(prev).forEach(([mId, tList]) => {
             tList.forEach(t => {
-              const inDb = (dbTasksMap[mId]||[]).find(d => d.id === t.id);
-              if (!inDb && t.status === "new") {
-                // Задача есть в state но не в DB — сохраняем повторно
+              const allDbTasks = Object.values(dbTasksMap).flat();
+              const inDb = allDbTasks.find(d => d.id === t.id);
+              if (!inDb) {
                 if (!merged[mId]) merged[mId] = [];
-                merged[mId].push(t);
-                // Пробуем сохранить снова
-                saveTask(mId, t);
+                // Не дублируем
+                if (!merged[mId].find(x => x.id === t.id)) {
+                  merged[mId].push(t);
+                  // Сохраняем в DB снова (тихо, без блокировки)
+                  saveTaskToDb(mId, t).catch(() => {});
+                }
               }
             });
           });
@@ -3531,7 +3548,7 @@ export default function App() {
         });
         setEventsState(evtsMap);
       } catch(e) { /* тихая ошибка */ }
-    }, 8000);
+    }, 15000);
     return () => clearInterval(interval);
   }, [me]);
  
@@ -3644,8 +3661,6 @@ export default function App() {
       setTasksState(tasksMap);
     } catch(e) {
       console.error("Ошибка сохранения задачи:", e);
-      // Задача осталась в UI state — попробуем сохранить ещё раз через 3 сек
-      setTimeout(() => { saveTask(mgrId, task); }, 3000);
     } finally {
       isSaving.current = false;
       lastSaved.current = Date.now();
