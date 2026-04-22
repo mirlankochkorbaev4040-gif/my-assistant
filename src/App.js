@@ -19,23 +19,58 @@ const headers = {
 const db = {
  async select(table) {
    const r = await fetch(`${SUPA_URL}/rest/v1/${table}?select=*`, { headers });
-   if (!r.ok) throw new Error(await r.text());
+   if (!r.ok) {
+     const err = await r.text();
+     console.error(`DB select ${table} error ${r.status}:`, err);
+     throw new Error(err);
+   }
    return r.json();
  },
  async upsert(table, row) {
+   // Убеждаемся что передаём одиночный объект, не массив
+   const body = Array.isArray(row) ? row : [row];
    const r = await fetch(`${SUPA_URL}/rest/v1/${table}`, {
      method: "POST",
      headers: { ...headers, "Prefer": "resolution=merge-duplicates,return=representation" },
-     body: JSON.stringify(row),
+     body: JSON.stringify(body),
    });
-   if (!r.ok) throw new Error(await r.text());
+   if (!r.ok) {
+     const err = await r.text();
+     console.error(`DB upsert ${table} error ${r.status}:`, err);
+     throw new Error(err);
+   }
+   return r.json();
+ },
+ async patch(table, id, patch) {
+   // PATCH — обновление существующей записи по id
+   const r = await fetch(`${SUPA_URL}/rest/v1/${table}?id=eq.${id}`, {
+     method: "PATCH",
+     headers: { ...headers, "Prefer": "return=representation" },
+     body: JSON.stringify(patch),
+   });
+   if (!r.ok) {
+     const err = await r.text();
+     console.error(`DB patch ${table} error ${r.status}:`, err);
+     throw new Error(err);
+   }
    return r.json();
  },
  async delete(table, id) {
    const r = await fetch(`${SUPA_URL}/rest/v1/${table}?id=eq.${id}`, {
      method: "DELETE", headers,
    });
-   if (!r.ok) throw new Error(await r.text());
+   if (!r.ok) {
+     const err = await r.text();
+     console.error(`DB delete ${table} error ${r.status}:`, err);
+     throw new Error(err);
+   }
+ },
+ // Проверить что запись существует в DB
+ async exists(table, id) {
+   const r = await fetch(`${SUPA_URL}/rest/v1/${table}?id=eq.${id}&select=id`, { headers });
+   if (!r.ok) return false;
+   const data = await r.json();
+   return data.length > 0;
  },
 };
 // helpers: db row → app object
@@ -3329,7 +3364,7 @@ export default function App() {
          evtsMap[r.mgr_id].push(rowToEvent(r));
        });
        setEventsState(evtsMap);
-     } catch(e) { /* тихая ошибка */ }
+     } catch(e) { console.warn('Polling error:', e); }
    }, 8000);
    return () => clearInterval(interval);
  }, [me]);
@@ -3429,65 +3464,61 @@ export default function App() {
      return next;
    });
  };
- // Сохранить задачу в DB — надёжное сохранение с верификацией
+ // Сохранить задачу в DB — надёжно, с верификацией
  const saveTask = async (mgrId, task) => {
    isSaving.current = true;
    lastSaved.current = Date.now();
    try {
-     // 1. Сохраняем в DB (с retry внутри saveTaskToDb)
      await saveTaskToDb(mgrId, task);
-     // 2. Верифицируем: задача реально появилась в DB?
-     await new Promise(r => setTimeout(r, 300)); // пауза 300мс
-     const check = await db.select("tasks");
-     const found = check.find(r => r.id === String(task.id));
-     if (!found) {
-       // Задача не появилась — пробуем ещё раз
-       console.warn("Задача не найдена в DB после сохранения, повторная попытка...");
+     // Верификация: задача реально попала в DB?
+     await new Promise(r => setTimeout(r, 500));
+     const inDb = await db.exists("tasks", String(task.id));
+     if (!inDb) {
+       console.warn("⚠️ Задача не найдена в DB после сохранения, retry...");
        await saveTaskToDb(mgrId, task);
+       // Финальная проверка
+       await new Promise(r => setTimeout(r, 500));
+       const inDb2 = await db.exists("tasks", String(task.id));
+       if (!inDb2) {
+         console.error("❌ Задача НЕ сохранилась в DB! Проверь RLS политики в Supabase.");
+       } else {
+         console.log("✅ Задача сохранена в DB (retry)");
+       }
+     } else {
+       console.log("✅ Задача сохранена в DB:", task.id);
      }
    } catch(e) {
-     console.error("Ошибка сохранения задачи:", e);
+     console.error("❌ Ошибка saveTask:", e);
    } finally {
      isSaving.current = false;
      lastSaved.current = Date.now();
    }
  };
- // Обновить задачу (patch) в DB
- const updateTask = async (mgrId, taskId, patch) => {
-   // ✅ ИСПРАВЛЕНО: сначала обновляем локально, потом сохраняем в DB
-   // НЕ перечитываем DB после сохранения — это стирало несохранённые задачи
-   // 1. Мгновенно обновляем локальный state
+ // Обновить задачу (patch) — локально + DB
+ const updateTask = (mgrId, taskId, patch) => {
+   // 1. Сразу обновляем локальный state
    setTasksState(prev => {
      const next = {
        ...prev,
        [mgrId]: (prev[mgrId]||[]).map(t => t.id===taskId ? {...t,...patch} : t)
      };
      try { localStorage.setItem("ma_tasks", JSON.stringify(next)); } catch {}
+ 
+     // 2. Сохраняем в DB — берём задачу прямо из нового state
+     const updatedTask = next[mgrId]?.find(t => t.id === taskId);
+     if (updatedTask) {
+       isSaving.current = true;
+       lastSaved.current = Date.now();
+       saveTaskToDb(mgrId, updatedTask)
+         .then(() => console.log("✅ Задача обновлена в DB:", taskId))
+         .catch(e => console.error("❌ Ошибка updateTask:", e))
+         .finally(() => {
+           isSaving.current = false;
+           lastSaved.current = Date.now();
+         });
+     }
      return next;
    });
-   // 2. Сохраняем в DB в фоне
-   isSaving.current = true;
-   lastSaved.current = Date.now();
-   try {
-     const tData = await db.select("tasks");
-     const row = tData.find(r => r.id === String(taskId));
-     if (row) {
-       const updated = { ...rowToTask(row), ...patch };
-       await saveTaskToDb(mgrId, updated);
-     } else {
-       // Задача ещё не в DB (только что создана) — читаем из localStorage
-       try {
-         const cached = JSON.parse(localStorage.getItem("ma_tasks") || "{}");
-         const localTask = (cached[mgrId]||[]).find(t => String(t.id) === String(taskId));
-         if (localTask) await saveTaskToDb(mgrId, { ...localTask, ...patch });
-       } catch {}
-     }
-   } catch(e) {
-     console.error("Ошибка обновления задачи:", e);
-   } finally {
-     isSaving.current = false;
-     lastSaved.current = Date.now();
-   }
  };
  // ── Сохранение сообщения ──────────────────────────────────────────────────
  async function saveMsgToDb(mgrId, msg) {
