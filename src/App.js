@@ -3416,7 +3416,7 @@ export default function App() {
        await db.upsert("tasks", row);
        return; // успех
      } catch(e) {
-       console.error(\`saveTaskToDb attempt \${attempt} failed:\`, e);
+       console.error(`saveTaskToDb attempt ${attempt} failed:`, e);
        if (attempt < 3) await new Promise(r => setTimeout(r, 1000 * attempt));
      }
    }
