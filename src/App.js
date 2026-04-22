@@ -3248,21 +3248,8 @@ export default function App() {
        if (!tasksMap[r.mgr_id]) tasksMap[r.mgr_id] = [];
        tasksMap[r.mgr_id].push(rowToTask(r));
      });
-     // Если в DB нет задач — восстанавливаем из localStorage
-     if (tData.length === 0) {
-       try {
-         const cached = localStorage.getItem("ma_tasks");
-         if (cached) {
-           const cachedMap = JSON.parse(cached);
-           setTasksState(cachedMap);
-           // Пробуем сохранить все задачи из кэша в DB
-           Object.entries(cachedMap).forEach(([mId, tList]) => {
-             tList.forEach(t => saveTask(mId, t));
-           });
-           return;
-         }
-       } catch {}
-     }
+     // DB — единственный источник правды
+     // localStorage используем только для кэша UI, не для восстановления
      setTasksState(tasksMap);
      try { localStorage.setItem("ma_tasks", JSON.stringify(tasksMap)); } catch {}
      const msgsMap = {};
@@ -3291,7 +3278,8 @@ export default function App() {
    // Users и tasks НЕ перезагружаем — они уже актуальны в state после сохранения
    const interval = setInterval(async () => {
      if (!me || isSaving.current) return;
-     if (Date.now() - lastSaved.current < 15000) return; // пауза 15 сек после сохранения
+     // Пауза 5 сек после сохранения — чтобы DB успела зафиксировать
+     if (Date.now() - lastSaved.current < 5000) return;
      try {
        const [tData, mData, eData] = await Promise.all([
          db.select("tasks"),
@@ -3342,7 +3330,7 @@ export default function App() {
        });
        setEventsState(evtsMap);
      } catch(e) { /* тихая ошибка */ }
-   }, 15000);
+   }, 8000);
    return () => clearInterval(interval);
  }, [me]);
  // ── Сохранение пользователя в Supabase ────────────────────────────────────
@@ -3407,23 +3395,31 @@ export default function App() {
  };
  // ── Сохранение задачи ─────────────────────────────────────────────────────
  async function saveTaskToDb(mgrId, task) {
-   try {
-     await db.upsert("tasks", {
-       id: String(task.id), mgr_id: mgrId,
-       title: task.title, description: task.desc || "",
-       deadline: task.deadline, priority: task.priority || "medium",
-       er: task.er || "", status: task.status || "new",
-       rating: task.rating || null, rc: task.rc || null,
-       saved: task.saved || null, result: task.result || "",
-       help_comment: task.helpComment || "",
-       mgr_reply: task.mgrReply || "",
-       files: task.files || [],
-       photo: task.photo || null,
-       link: task.link || null,
-       result_photo: task.resultPhoto || null,
-       result_link: task.resultLink || null,
-     });
-   } catch(e) { console.error("Ошибка сохранения задачи:", e); }
+   const row = {
+     id: String(task.id), mgr_id: mgrId,
+     title: task.title, description: task.desc || "",
+     deadline: task.deadline, priority: task.priority || "medium",
+     er: task.er || "", status: task.status || "new",
+     rating: task.rating || null, rc: task.rc || null,
+     saved: task.saved || null, result: task.result || "",
+     help_comment: task.helpComment || "",
+     mgr_reply: task.mgrReply || "",
+     files: task.files || [],
+     photo: task.photo || null,
+     link: task.link || null,
+     result_photo: task.resultPhoto || null,
+     result_link: task.resultLink || null,
+   };
+   // Retry 3 раза — сеть может быть нестабильной
+   for (let attempt = 1; attempt <= 3; attempt++) {
+     try {
+       await db.upsert("tasks", row);
+       return; // успех
+     } catch(e) {
+       console.error(\`saveTaskToDb attempt \${attempt} failed:\`, e);
+       if (attempt < 3) await new Promise(r => setTimeout(r, 1000 * attempt));
+     }
+   }
  }
  // setTasks — чистый React setter, без async/DB
  const setTasks = fn => {
@@ -3433,14 +3429,22 @@ export default function App() {
      return next;
    });
  };
- // Сохранить задачу в DB и перечитать state из DB
+ // Сохранить задачу в DB — надёжное сохранение с верификацией
  const saveTask = async (mgrId, task) => {
-   // ✅ ИСПРАВЛЕНО: не перечитываем DB — доверяем локальному state
-   // Задача уже добавлена в state через setTasks в addTask()
    isSaving.current = true;
    lastSaved.current = Date.now();
    try {
+     // 1. Сохраняем в DB (с retry внутри saveTaskToDb)
      await saveTaskToDb(mgrId, task);
+     // 2. Верифицируем: задача реально появилась в DB?
+     await new Promise(r => setTimeout(r, 300)); // пауза 300мс
+     const check = await db.select("tasks");
+     const found = check.find(r => r.id === String(task.id));
+     if (!found) {
+       // Задача не появилась — пробуем ещё раз
+       console.warn("Задача не найдена в DB после сохранения, повторная попытка...");
+       await saveTaskToDb(mgrId, task);
+     }
    } catch(e) {
      console.error("Ошибка сохранения задачи:", e);
    } finally {
