@@ -643,76 +643,137 @@ function ChatBlock({messages, setMessages, mgrId, myRole, peer, onSend}) {
 // ── AI ВЫПОЛНЕНИЕ ЗАДАЧИ ──────────────────────────────────────────────────────
 function AiExecute({ task, onResult }) {
   const [phase, setPhase] = useState("idle");
-  // idle | executing | reviewing | done
+  // idle | planning | reviewing_plan | executing | reviewing | done
+  const [aiPlan, setAiPlan] = useState("");
   const [aiResult, setAiResult] = useState("");
   const [reviewNote, setReviewNote] = useState("");
   const [assistantEdit, setAssistantEdit] = useState("");
   const [showEdit, setShowEdit] = useState(false);
   const [retrying, setRetrying] = useState(false);
-  const [attachedFile, setAttachedFile] = useState(null); // { name, dataUrl }
-  async function executeTask() {
-    setPhase("executing");
-    setAiResult("");
-    setReviewNote("");
+  const [attachedFile, setAttachedFile] = useState(null);
+  const today = new Date().toLocaleDateString("ru-RU", {year:"numeric",month:"long",day:"numeric"});
+
+  // ── Шаг 1: Генерация плана ────────────────────────────────────────────────
+  async function generatePlan() {
+    setPhase("planning");
+    setAiPlan("");
     try {
-      const response = await fetch("/api/claude", {
+      const resp = await fetch("/api/claude", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
+          max_tokens: 800,
+          tools: [{ type: "web_search_20250305", name: "web_search" }],
           messages: [{
             role: "user",
-            content: `Ты профессиональный бизнес-ассистент. Выполни следующую задачу максимально качественно.
+            content: `Сегодня ${today}. Ты бизнес-ассистент. Перед выполнением задачи составь КРАТКИЙ план действий (3-5 шагов).
+
 ЗАДАЧА: ${task.title}
 ОПИСАНИЕ: ${task.desc || "не указано"}
 ОЖИДАЕМЫЙ РЕЗУЛЬТАТ: ${task.er || "не указан"}
-Выполни задачу и напиши конкретный готовый результат. Не пиши "я выполнил" — пиши сам результат: текст, список, план, ответ и т.д. Будь конкретным и полезным.`
+
+Если задача требует актуальных данных (адреса, телефоны, компании, цены, рестораны, поставщики и т.д.) — сначала найди их через поиск, потом составь план.
+Определи город из задачи и ищи данные именно по этому городу.
+
+Напиши ТОЛЬКО пронумерованный план (1-5 шагов), коротко и конкретно. Без вступления.`
           }]
         })
       });
-      const data = await response.json();
-      const text = data.content?.[0]?.text || "Не удалось получить результат";
+      const data = await resp.json();
+      const text = data.content?.filter(b => b.type === "text").map(b => b.text).join("") || "Не удалось составить план";
+      setAiPlan(text);
+      setPhase("reviewing_plan");
+    } catch(e) {
+      setAiPlan("⚠️ Ошибка при составлении плана. Попробуйте снова.");
+      setPhase("reviewing_plan");
+    }
+  }
+
+  // ── Шаг 2: Выполнение задачи по плану + web search ───────────────────────
+  async function executeTask() {
+    setPhase("executing");
+    setAiResult("");
+    try {
+      const resp = await fetch("/api/claude", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 2000,
+          tools: [{ type: "web_search_20250305", name: "web_search" }],
+          messages: [{
+            role: "user",
+            content: `Сегодня ${today}. Ты профессиональный бизнес-ассистент. Выполни задачу строго по плану.
+
+ЗАДАЧА: ${task.title}
+ОПИСАНИЕ: ${task.desc || "не указано"}
+ОЖИДАЕМЫЙ РЕЗУЛЬТАТ: ${task.er || "не указан"}
+
+ПЛАН ВЫПОЛНЕНИЯ:
+${aiPlan}
+
+ВАЖНЫЕ ПРАВИЛА:
+1. Если задача касается конкретного города (Алматы, Астана, Шымкент и др.) — ищи актуальную информацию именно по этому городу через поиск.
+2. Адреса, телефоны, названия компаний, рестораны, поставщики — ОБЯЗАТЕЛЬНО проверяй через поиск. Не выдумывай.
+3. Если не нашёл точный адрес или телефон — честно напиши "требует уточнения" вместо выдуманных данных.
+4. Цены и контакты указывай только те что нашёл в поиске, с пометкой актуальности.
+5. Пиши готовый результат — конкретно, структурированно, без воды.
+
+Выполни задачу используя поиск для получения актуальных данных.`
+          }]
+        })
+      });
+      const data = await resp.json();
+      const text = data.content?.filter(b => b.type === "text").map(b => b.text).join("") || "Не удалось получить результат";
       setAiResult(text);
       setAssistantEdit(text);
       setPhase("reviewing");
-    } catch (e) {
+    } catch(e) {
       setAiResult("⚠️ Ошибка при выполнении. Проверьте соединение и попробуйте снова.");
       setPhase("reviewing");
     }
   }
+
+  // ── Шаг 3: Доработка по правкам ──────────────────────────────────────────
   async function retryWithNote() {
     if (!reviewNote.trim()) return;
     setRetrying(true);
     try {
-      const response = await fetch("/api/claude", {
+      const resp = await fetch("/api/claude", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
+          max_tokens: 2000,
+          tools: [{ type: "web_search_20250305", name: "web_search" }],
           messages: [{
             role: "user",
-            content: `Ты профессиональный бизнес-ассистент. Ты уже выполнил задачу, но ассистент оставил правки.
+            content: `Сегодня ${today}. Ты профессиональный бизнес-ассистент. Доработай результат с учётом правок.
+
 ЗАДАЧА: ${task.title}
 ОПИСАНИЕ: ${task.desc || "не указано"}
 ОЖИДАЕМЫЙ РЕЗУЛЬТАТ: ${task.er || "не указан"}
+
 Твой предыдущий результат:
 ${aiResult}
+
 Правки ассистента:
 ${reviewNote}
-Доработай результат с учётом правок. Пиши только итоговый готовый результат.`
+
+Если правки требуют поиска новых данных — найди их. Пиши только итоговый готовый доработанный результат.`
           }]
         })
       });
-      const data = await response.json();
-      const text = data.content?.[0]?.text || "Не удалось получить результат";
+      const data = await resp.json();
+      const text = data.content?.filter(b => b.type === "text").map(b => b.text).join("") || "Не удалось получить результат";
       setAiResult(text);
       setAssistantEdit(text);
       setReviewNote("");
-    } catch (e) {}
+    } catch(e) {}
     setRetrying(false);
   }
+
   function handleFileAttach(e) {
     const file = e.target.files[0];
     if (!file) return;
@@ -720,78 +781,135 @@ ${reviewNote}
     reader.onload = ev => setAttachedFile({ name: file.name, dataUrl: ev.target.result });
     reader.readAsDataURL(file);
   }
+
   function acceptResult() {
-    // Pass result text + optional file to parent
     onResult(assistantEdit || aiResult, attachedFile);
     setPhase("done");
   }
+
+  // ── РЕНДЕР ────────────────────────────────────────────────────────────────
+
   if (phase === "idle") {
     return (
-      <button
-        onClick={executeTask}
+      <button onClick={generatePlan}
         style={{...sf, width:"100%", background:"linear-gradient(135deg,#5856D6,#007AFF)",
           color:"#fff", border:"none", borderRadius:12, padding:"13px", fontSize:15,
           fontWeight:700, cursor:"pointer", marginBottom:8,
           boxShadow:"0 4px 16px rgba(88,86,214,0.35)",
-          display:"flex", alignItems:"center", justifyContent:"center", gap:8}}
-      >
+          display:"flex", alignItems:"center", justifyContent:"center", gap:8}}>
         <span style={{fontSize:20}}>🤖</span>
         ИИ выполнит задачу
       </button>
     );
   }
+
+  if (phase === "planning") {
+    return (
+      <div style={{background:"linear-gradient(135deg,rgba(88,86,214,0.08),rgba(0,122,255,0.05))",
+        border:"1.5px solid rgba(88,86,214,0.25)", borderRadius:14,
+        padding:"20px 18px", marginBottom:8, textAlign:"center"}}>
+        <div style={{fontSize:32, marginBottom:8}}>🔍</div>
+        <div style={{...sf, fontSize:15, fontWeight:700, color:"#5856D6", marginBottom:4}}>
+          ИИ составляет план…
+        </div>
+        <div style={{...sf, fontSize:13, color:g4}}>
+          Анализирую задачу и ищу актуальные данные
+        </div>
+      </div>
+    );
+  }
+
+  if (phase === "reviewing_plan") {
+    return (
+      <div style={{marginBottom:8}}>
+        <div style={{background:"linear-gradient(135deg,rgba(88,86,214,0.09),rgba(0,122,255,0.04))",
+          border:"1.5px solid rgba(88,86,214,0.22)", borderRadius:"14px 14px 0 0",
+          padding:"12px 16px", display:"flex", alignItems:"center", gap:8}}>
+          <span style={{fontSize:18}}>📋</span>
+          <div>
+            <div style={{...sf, fontSize:13, fontWeight:700, color:"#5856D6"}}>
+              План выполнения готов
+            </div>
+            <div style={{...sf, fontSize:11, color:g4}}>
+              Проверьте план и запустите выполнение
+            </div>
+          </div>
+        </div>
+        <div style={{background:g1, border:"1.5px solid rgba(88,86,214,0.15)",
+          borderTop:"none", padding:"14px 16px",
+          borderRadius:"0 0 14px 14px"}}>
+          <div style={{...sf, fontSize:14, color:"#1c1c1e", lineHeight:1.7,
+            whiteSpace:"pre-wrap"}}>
+            {aiPlan}
+          </div>
+          <div style={{display:"flex", gap:8, marginTop:14}}>
+            <button onClick={()=>{setPhase("idle");setAiPlan("");}}
+              style={{...sf, flex:1, background:g2, color:g4, border:"none",
+                borderRadius:10, padding:"11px", fontSize:13, fontWeight:600,
+                cursor:"pointer"}}>
+              ↩ Отменить
+            </button>
+            <button onClick={executeTask}
+              style={{...sf, flex:2, background:"linear-gradient(135deg,#5856D6,#007AFF)",
+                color:"#fff", border:"none", borderRadius:10, padding:"11px",
+                fontSize:14, fontWeight:700, cursor:"pointer",
+                boxShadow:"0 4px 12px rgba(88,86,214,0.35)"}}>
+              🚀 Выполнить по плану
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (phase === "executing") {
     return (
       <div style={{background:"linear-gradient(135deg,rgba(88,86,214,0.08),rgba(0,122,255,0.05))",
         border:"1.5px solid rgba(88,86,214,0.25)", borderRadius:14,
         padding:"20px 18px", marginBottom:8, textAlign:"center"}}>
-        <div style={{fontSize:36, marginBottom:10}}>🤖</div>
+        <div style={{fontSize:32, marginBottom:8}}>🤖</div>
         <div style={{...sf, fontSize:15, fontWeight:700, color:"#5856D6", marginBottom:4}}>
           ИИ выполняет задачу…
         </div>
-        <div style={{...sf, fontSize:13, color:g4, marginBottom:14}}>
-          Анализирую задачу и готовлю результат
-        </div>
-        <div style={{display:"flex", justifyContent:"center", gap:8}}>
-          {[0,1,2].map(i => (
-            <div key={i} style={{width:10, height:10, borderRadius:"50%",
-              background:"#5856D6", opacity:0.25+i*0.37}}/>
-          ))}
+        <div style={{...sf, fontSize:13, color:g4}}>
+          Ищу актуальные данные и готовлю результат
         </div>
       </div>
     );
   }
+
   if (phase === "reviewing") {
     return (
       <div style={{marginBottom:8}}>
-        {/* Шапка */}
         <div style={{background:"linear-gradient(135deg,rgba(88,86,214,0.09),rgba(0,122,255,0.04))",
           border:"1.5px solid rgba(88,86,214,0.22)", borderRadius:"14px 14px 0 0",
           padding:"12px 16px", display:"flex", alignItems:"center", gap:8}}>
           <span style={{fontSize:20}}>🤖</span>
           <div style={{flex:1}}>
-            <div style={{...sf, fontSize:13, fontWeight:700, color:"#5856D6"}}>ИИ выполнил задачу</div>
-            <div style={{...sf, fontSize:11, color:g4}}>Проверьте — примите или доработайте</div>
+            <div style={{...sf, fontSize:13, fontWeight:700, color:"#5856D6"}}>
+              ИИ выполнил задачу
+            </div>
+            <div style={{...sf, fontSize:11, color:g4}}>
+              Проверьте — примите или доработайте
+            </div>
           </div>
         </div>
-        {/* Результат */}
         <div style={{background:g1, border:"1.5px solid rgba(88,86,214,0.15)",
           borderTop:"none", padding:"14px 16px"}}>
           {showEdit ? (
             <textarea value={assistantEdit} onChange={e=>setAssistantEdit(e.target.value)}
-              rows={7}
+              rows={8}
               style={{...sf, width:"100%", background:WH,
                 border:"1.5px solid rgba(0,122,255,0.3)", borderRadius:10,
                 padding:"11px 13px", fontSize:14, outline:"none", resize:"vertical",
                 boxSizing:"border-box", lineHeight:1.5}}/>
           ) : (
             <div style={{...sf, fontSize:14, color:"#1c1c1e", lineHeight:1.65,
-              whiteSpace:"pre-wrap", maxHeight:220, overflowY:"auto"}}>
+              whiteSpace:"pre-wrap", maxHeight:240, overflowY:"auto"}}>
               {aiResult}
             </div>
           )}
         </div>
-        {/* Прикрепить файл */}
         <div style={{background:WH, border:"1.5px solid rgba(88,86,214,0.15)",
           borderTop:`0.5px solid ${SEP}`, padding:"12px 16px"}}>
           <div style={{...sf, fontSize:11, color:g4, fontWeight:600,
@@ -818,7 +936,6 @@ ${reviewNote}
             )}
           </div>
         </div>
-        {/* Правки */}
         <div style={{background:WH, border:"1.5px solid rgba(88,86,214,0.15)",
           borderTop:`0.5px solid ${SEP}`, padding:"12px 16px"}}>
           <div style={{...sf, fontSize:11, color:g4, fontWeight:600,
@@ -826,13 +943,12 @@ ${reviewNote}
             📝 Ваши правки (необязательно)
           </div>
           <textarea value={reviewNote} onChange={e=>setReviewNote(e.target.value)}
-            placeholder="Что нужно исправить или добавить? ИИ доработает…"
+            placeholder="Что нужно исправить или добавить? ИИ доработает с поиском…"
             rows={2}
             style={{...sf, width:"100%", background:g1, border:"none", borderRadius:10,
               padding:"10px 13px", fontSize:13, outline:"none", resize:"none",
               boxSizing:"border-box", lineHeight:1.5}}/>
         </div>
-        {/* Кнопки */}
         <div style={{background:WH, border:"1.5px solid rgba(88,86,214,0.15)",
           borderTop:`0.5px solid ${SEP}`, borderRadius:"0 0 14px 14px",
           padding:"12px 16px", display:"flex", gap:8, flexWrap:"wrap"}}>
@@ -865,13 +981,13 @@ ${reviewNote}
         </div>
         <button onClick={()=>{setPhase("idle");setAiResult("");setReviewNote("");setAssistantEdit("");setShowEdit(false);setAttachedFile(null);}}
           style={{...sf, width:"100%", background:"none", border:"none",
-            cursor:"pointer", fontSize:12, color:g4,
-            padding:"8px 0 2px", textAlign:"center"}}>
+            cursor:"pointer", fontSize:12, color:g4, padding:"8px 0 2px", textAlign:"center"}}>
           ↩ Отменить и выполнить самостоятельно
         </button>
       </div>
     );
   }
+
   if (phase === "done") {
     return (
       <div style={{background:"rgba(52,199,89,0.08)",
@@ -887,6 +1003,7 @@ ${reviewNote}
   }
   return null;
 }
+
 // ── AI ПРОВЕРКА ЗАДАЧИ ────────────────────────────────────────────────────────
 function AiCheck({task, onDone}) {
  const [result,   setResult]   = useState(task.result||"");
