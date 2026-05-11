@@ -1829,7 +1829,7 @@ function WeeklyReportClient({tasks, totalSaved}) {
        <div style={{flex:1,background:WH,borderRadius:14,padding:"12px",textAlign:"center",
          boxShadow:"0 1px 6px rgba(0,0,0,0.05)"}}>
          <div style={{...sf,fontSize:28,fontWeight:800,color:B,letterSpacing:-1}}>{weekTasks.length}</div>
-         <div style={{...sf,fontSize:11,color:g4,marginTop:2}}>задач\nвыполнено</div>
+         <div style={{...sf,fontSize:11,color:g4,marginTop:2}}>задач выполнено</div>
        </div>
        {weekSaved>0 && <div style={{flex:1,background:WH,borderRadius:14,padding:"12px",textAlign:"center",
          boxShadow:"0 1px 6px rgba(0,0,0,0.05)"}}>
@@ -4168,9 +4168,9 @@ export default function App() {
                  textTransform:"uppercase",letterSpacing:0.4,marginBottom:10}}>📊 Статистика</div>
                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:16}}>
                  {[
-                   {v:mgrTasks.length, l:"задач\nпоручено", c:B, bg:"rgba(0,122,255,0.08)", i:"📋"},
+                   {v:mgrTasks.length, l:"задач поручено", c:B, bg:"rgba(0,122,255,0.08)", i:"📋"},
                    {v:fmtMin(totalSaved)||"0 мин", l:"сэкономлено", c:G, bg:"rgba(52,199,89,0.08)", i:"⏱"},
-                   {v:avgRating?`★ ${avgRating}`:"—", l:"средняя\nоценка", c:O, bg:"rgba(255,149,0,0.08)", i:"⭐"},
+                   {v:avgRating?`★ ${avgRating}`:"—", l:"средняя оценка", c:O, bg:"rgba(255,149,0,0.08)", i:"⭐"},
                  ].map((m,i)=>(
                    <div key={i} style={{background:m.bg,borderRadius:16,padding:"12px 6px",textAlign:"center"}}>
                      <div style={{fontSize:18,marginBottom:2}}>{m.i}</div>
