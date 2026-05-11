@@ -642,7 +642,6 @@ function ChatBlock({messages, setMessages, mgrId, myRole, peer, onSend}) {
 }
 // ── AI ВЫПОЛНЕНИЕ ЗАДАЧИ ──────────────────────────────────────────────────────
 const DGIS_KEY = "18c514b9-3f3a-45d9-9093-985ab0c1eb45";
-
 // Поиск реальных мест через 2ГИС API
 async function searchDgis(query, city) {
   try {
@@ -657,15 +656,12 @@ async function searchDgis(query, city) {
       return `• ${item.name_ex?.primary || item.name || "—"}
   📍 ${addr}
   📞 ${phones}`;
-    }).join("
-
-");
+    }).join("\n");
   } catch(e) {
     console.error("2GIS error:", e);
     return null;
   }
 }
-
 // Определяем город из текста задачи
 function detectCity(text) {
   const cities = ["Алматы","Астана","Шымкент","Актобе","Актау","Атырау","Павлодар","Костанай","Семей","Тараз","Усть-Каменогорск","Кызылорда","Петропавловск","Уральск","Туркестан","Экибастуз","Талдыkorgan","Талдыкорган"];
@@ -675,7 +671,6 @@ function detectCity(text) {
   }
   return "Алматы";
 }
-
 function AiExecute({ task, onResult }) {
   const [phase, setPhase] = useState("idle");
   const [aiResult, setAiResult] = useState("");
@@ -686,27 +681,21 @@ function AiExecute({ task, onResult }) {
   const [attachedFile, setAttachedFile] = useState(null);
   const [dgisInfo, setDgisInfo] = useState("");
   const today = new Date().toLocaleDateString("ru-RU", {year:"numeric",month:"long",day:"numeric"});
-
   async function executeTask() {
     setPhase("executing");
     setAiResult("");
     setDgisInfo("");
-
     const city = detectCity((task.title || "") + " " + (task.desc || ""));
-
     // Параллельно: ищем в 2ГИС и готовим промпт
     const dgisResults = await searchDgis(task.title, city);
     if (dgisResults) setDgisInfo(dgisResults);
-
     const dgisBlock = dgisResults
       ? `
 АКТУАЛЬНЫЕ ДАННЫЕ ИЗ 2ГИС (${city}):
 ${dgisResults}
-
 Используй эти реальные данные в своём ответе.`
       : `
 (Поиск в 2ГИС не дал результатов. Используй свои знания, но отмечай неточные данные пометкой "(уточнить)")`;
-
     try {
       const resp = await fetch("/api/claude", {
         method: "POST",
@@ -717,13 +706,11 @@ ${dgisResults}
           messages: [{
             role: "user",
             content: `Сегодня ${today}. Ты профессиональный бизнес-ассистент. Выполни задачу на основе реальных данных.
-
 ЗАДАЧА: ${task.title}
 ОПИСАНИЕ: ${task.desc || "не указано"}
 ОЖИДАЕМЫЙ РЕЗУЛЬТАТ: ${task.er || "не указан"}
 ГОРОД: ${city}
 ${dgisBlock}
-
 ПРАВИЛА:
 1. Используй данные из 2ГИС как основу — они актуальные и реальные.
 2. Структурируй ответ: название, адрес, телефон, краткое описание.
@@ -746,7 +733,6 @@ ${dgisBlock}
       setPhase("reviewing");
     }
   }
-
   async function retryWithNote() {
     if (!reviewNote.trim()) return;
     setRetrying(true);
@@ -760,21 +746,16 @@ ${dgisBlock}
           messages: [{
             role: "user",
             content: `Сегодня ${today}. Доработай результат с учётом правок.
-
 ЗАДАЧА: ${task.title}
 ОПИСАНИЕ: ${task.desc || "не указано"}
 ОЖИДАЕМЫЙ РЕЗУЛЬТАТ: ${task.er || "не указан"}
-
 ${dgisInfo ? `Данные из 2ГИС:
 ${dgisInfo}
 ` : ""}
-
 Предыдущий результат:
 ${aiResult}
-
 Правки:
 ${reviewNote}
-
 Дай только итоговый доработанный результат.`
           }]
         })
@@ -791,7 +772,6 @@ ${reviewNote}
     }
     setRetrying(false);
   }
-
   function handleFileAttach(e) {
     const file = e.target.files[0];
     if (!file) return;
@@ -799,12 +779,10 @@ ${reviewNote}
     reader.onload = ev => setAttachedFile({ name: file.name, dataUrl: ev.target.result });
     reader.readAsDataURL(file);
   }
-
   function acceptResult() {
     onResult(assistantEdit || aiResult, attachedFile);
     setPhase("done");
   }
-
   function resetAll() {
     setPhase("idle");
     setAiResult("");
@@ -814,7 +792,6 @@ ${reviewNote}
     setAttachedFile(null);
     setDgisInfo("");
   }
-
   if (phase === "idle") {
     return (
       <button onClick={executeTask}
@@ -828,7 +805,6 @@ ${reviewNote}
       </button>
     );
   }
-
   if (phase === "executing") {
     return (
       <div style={{background:"linear-gradient(135deg,rgba(88,86,214,0.08),rgba(0,122,255,0.05))",
@@ -847,7 +823,6 @@ ${reviewNote}
       </div>
     );
   }
-
   if (phase === "reviewing") {
     return (
       <div style={{marginBottom:8}}>
@@ -862,7 +837,6 @@ ${reviewNote}
             </div>
           </div>
         </div>
-
         <div style={{background:g1, border:"1.5px solid rgba(88,86,214,0.15)",
           borderTop:"none", padding:"14px 16px"}}>
           {showEdit ? (
@@ -879,7 +853,6 @@ ${reviewNote}
             </div>
           )}
         </div>
-
         <div style={{background:WH, border:"1.5px solid rgba(88,86,214,0.15)",
           borderTop:`0.5px solid ${SEP}`, padding:"12px 16px"}}>
           <div style={{...sf, fontSize:11, color:g4, fontWeight:600,
@@ -904,7 +877,6 @@ ${reviewNote}
             )}
           </div>
         </div>
-
         <div style={{background:WH, border:"1.5px solid rgba(88,86,214,0.15)",
           borderTop:`0.5px solid ${SEP}`, padding:"12px 16px"}}>
           <div style={{...sf, fontSize:11, color:g4, fontWeight:600,
@@ -918,7 +890,6 @@ ${reviewNote}
               padding:"10px 13px", fontSize:13, outline:"none", resize:"none",
               boxSizing:"border-box", lineHeight:1.5}}/>
         </div>
-
         <div style={{background:WH, border:"1.5px solid rgba(88,86,214,0.15)",
           borderTop:`0.5px solid ${SEP}`, borderRadius:"0 0 14px 14px",
           padding:"12px 16px", display:"flex", gap:8, flexWrap:"wrap"}}>
@@ -949,7 +920,6 @@ ${reviewNote}
             ✅ Принять и сдать
           </button>
         </div>
-
         <button onClick={resetAll}
           style={{...sf, width:"100%", background:"none", border:"none",
             cursor:"pointer", fontSize:12, color:g4, padding:"8px 0 2px", textAlign:"center"}}>
@@ -958,7 +928,6 @@ ${reviewNote}
       </div>
     );
   }
-
   if (phase === "done") {
     return (
       <div style={{background:"rgba(52,199,89,0.08)",
@@ -974,7 +943,6 @@ ${reviewNote}
   }
   return null;
 }
-
 // ── AI ПРОВЕРКА ЗАДАЧИ ────────────────────────────────────────────────────────
 function AiCheck({task, onDone}) {
  const [result,   setResult]   = useState(task.result||"");
