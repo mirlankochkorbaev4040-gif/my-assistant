@@ -647,7 +647,7 @@ async function searchDgis(query, city) {
   try {
     const q = encodeURIComponent(`${query} ${city}`);
     const url = `https://catalog.api.2gis.com/3.0/items?q=${q}&fields=items.point,items.address,items.contact_groups,items.rubrics,items.name_ex&key=${DGIS_KEY}&page_size=5&locale=ru_KZ`;
-    const resp = await fetch(url);
+    const resp = await fetch(url, { mode: "cors", signal: AbortSignal.timeout(8000) });
     const data = await resp.json();
     if (!data.result?.items?.length) return null;
     return data.result.items.map(item => {
@@ -687,7 +687,7 @@ function AiExecute({ task, onResult }) {
     setDgisInfo("");
     const city = detectCity((task.title || "") + " " + (task.desc || ""));
     // Параллельно: ищем в 2ГИС и готовим промпт
-    const dgisResults = await searchDgis(task.title, city);
+    const dgisResults = await searchDgis(task.title, city).catch(() => null);
     if (dgisResults) setDgisInfo(dgisResults);
     const dgisBlock = dgisResults
       ? `
@@ -729,7 +729,7 @@ ${dgisBlock}
       setPhase("reviewing");
     } catch(e) {
       console.error("AiExecute error:", e);
-      setAiResult("⚠️ Ошибка: " + (e.message || "проверьте соединение"));
+      setAiResult("⚠️ Ошибка соединения. Проверьте интернет или попробуйте позже.");
       setPhase("reviewing");
     }
   }
