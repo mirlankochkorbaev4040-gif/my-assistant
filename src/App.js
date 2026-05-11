@@ -641,6 +641,41 @@ function ChatBlock({messages, setMessages, mgrId, myRole, peer, onSend}) {
  );
 }
 // ── AI ВЫПОЛНЕНИЕ ЗАДАЧИ ──────────────────────────────────────────────────────
+const DGIS_KEY = "18c514b9-3f3a-45d9-9093-985ab0c1eb45";
+
+// Поиск реальных мест через 2ГИС API
+async function searchDgis(query, city) {
+  try {
+    const q = encodeURIComponent(`${query} ${city}`);
+    const url = `https://catalog.api.2gis.com/3.0/items?q=${q}&fields=items.point,items.address,items.contact_groups,items.rubrics,items.name_ex&key=${DGIS_KEY}&page_size=5&locale=ru_KZ`;
+    const resp = await fetch(url);
+    const data = await resp.json();
+    if (!data.result?.items?.length) return null;
+    return data.result.items.map(item => {
+      const phones = item.contact_groups?.[0]?.contacts?.filter(c => c.type === "phone").map(c => c.value).join(", ") || "телефон не указан";
+      const addr = item.address_name || item.address?.components?.map(c => c.street_with_type + (c.number ? " " + c.number : "")).filter(Boolean).join(", ") || "адрес уточнить";
+      return `• ${item.name_ex?.primary || item.name || "—"}
+  📍 ${addr}
+  📞 ${phones}`;
+    }).join("
+
+");
+  } catch(e) {
+    console.error("2GIS error:", e);
+    return null;
+  }
+}
+
+// Определяем город из текста задачи
+function detectCity(text) {
+  const cities = ["Алматы","Астана","Шымкент","Актобе","Актау","Атырау","Павлодар","Костанай","Семей","Тараз","Усть-Каменогорск","Кызылорда","Петропавловск","Уральск","Туркестан","Экибастуз","Талдыkorgan","Талдыкорган"];
+  const t = text.toLowerCase();
+  for (const c of cities) {
+    if (t.includes(c.toLowerCase())) return c;
+  }
+  return "Алматы";
+}
+
 function AiExecute({ task, onResult }) {
   const [phase, setPhase] = useState("idle");
   const [aiResult, setAiResult] = useState("");
@@ -649,20 +684,29 @@ function AiExecute({ task, onResult }) {
   const [showEdit, setShowEdit] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [attachedFile, setAttachedFile] = useState(null);
+  const [dgisInfo, setDgisInfo] = useState("");
   const today = new Date().toLocaleDateString("ru-RU", {year:"numeric",month:"long",day:"numeric"});
-
-  function getMapsLinks(taskTitle) {
-    const q = encodeURIComponent(taskTitle);
-    return {
-      yandex: `https://yandex.kz/maps/?text=${q}`,
-      gis: `https://2gis.kz/search/${q}`,
-      google: `https://www.google.com/maps/search/${q}`,
-    };
-  }
 
   async function executeTask() {
     setPhase("executing");
     setAiResult("");
+    setDgisInfo("");
+
+    const city = detectCity((task.title || "") + " " + (task.desc || ""));
+
+    // Параллельно: ищем в 2ГИС и готовим промпт
+    const dgisResults = await searchDgis(task.title, city);
+    if (dgisResults) setDgisInfo(dgisResults);
+
+    const dgisBlock = dgisResults
+      ? `
+АКТУАЛЬНЫЕ ДАННЫЕ ИЗ 2ГИС (${city}):
+${dgisResults}
+
+Используй эти реальные данные в своём ответе.`
+      : `
+(Поиск в 2ГИС не дал результатов. Используй свои знания, но отмечай неточные данные пометкой "(уточнить)")`;
+
     try {
       const resp = await fetch("/api/claude", {
         method: "POST",
@@ -672,43 +716,33 @@ function AiExecute({ task, onResult }) {
           max_tokens: 2000,
           messages: [{
             role: "user",
-            content: `Сегодня ${today}. Ты профессиональный бизнес-ассистент. Выполни задачу максимально качественно.
+            content: `Сегодня ${today}. Ты профессиональный бизнес-ассистент. Выполни задачу на основе реальных данных.
 
 ЗАДАЧА: ${task.title}
 ОПИСАНИЕ: ${task.desc || "не указано"}
 ОЖИДАЕМЫЙ РЕЗУЛЬТАТ: ${task.er || "не указан"}
+ГОРОД: ${city}
+${dgisBlock}
 
 ПРАВИЛА:
-1. Определи город из задачи. Если город не указан — используй Алматы по умолчанию.
-2. Все адреса, телефоны, названия компаний, цены — пиши только реальные и актуальные. Если не уверен в точности адреса или телефона — честно напиши "(уточнить по картам)" рядом.
-3. Структурируй ответ — используй списки, таблицы, разделы где уместно.
-4. Пиши готовый конкретный результат без вступлений типа "я выполнил".
-5. В конце добавь раздел "📍 Проверить на картах" со ссылками которые я дам отдельно.
-
-Выполни задачу и дай готовый результат.`
+1. Используй данные из 2ГИС как основу — они актуальные и реальные.
+2. Структурируй ответ: название, адрес, телефон, краткое описание.
+3. Если данных из 2ГИС недостаточно — дополни из своих знаний с пометкой "(уточнить)".
+4. Не выдумывай адреса и телефоны — только то что подтверждено данными.
+5. Пиши готовый конкретный результат без вступлений.`
           }]
         })
       });
       const data = await resp.json();
       if (data.error) throw new Error(data.error.message || "API error");
       const text = data.content?.[0]?.text || "";
-      if (!text) throw new Error("empty");
-
-      const maps = getMapsLinks(task.title);
-      const mapsSection = `
-
-📍 Проверить на картах:
-• Яндекс Карты: ${maps.yandex}
-• 2ГИС: ${maps.gis}
-• Google Maps: ${maps.google}`;
-      const fullResult = text + mapsSection;
-
-      setAiResult(fullResult);
-      setAssistantEdit(fullResult);
+      if (!text) throw new Error("Пустой ответ от сервера");
+      setAiResult(text);
+      setAssistantEdit(text);
       setPhase("reviewing");
     } catch(e) {
       console.error("AiExecute error:", e);
-      setAiResult("⚠️ Ошибка при выполнении: " + (e.message || "проверьте соединение"));
+      setAiResult("⚠️ Ошибка: " + (e.message || "проверьте соединение"));
       setPhase("reviewing");
     }
   }
@@ -725,26 +759,30 @@ function AiExecute({ task, onResult }) {
           max_tokens: 2000,
           messages: [{
             role: "user",
-            content: `Сегодня ${today}. Ты профессиональный бизнес-ассистент. Доработай результат с учётом правок.
+            content: `Сегодня ${today}. Доработай результат с учётом правок.
 
 ЗАДАЧА: ${task.title}
 ОПИСАНИЕ: ${task.desc || "не указано"}
 ОЖИДАЕМЫЙ РЕЗУЛЬТАТ: ${task.er || "не указан"}
 
+${dgisInfo ? `Данные из 2ГИС:
+${dgisInfo}
+` : ""}
+
 Предыдущий результат:
 ${aiResult}
 
-Правки ассистента:
+Правки:
 ${reviewNote}
 
-Доработай и дай только итоговый готовый результат. Если правки требуют новых данных — добавь их. Сохрани ссылки на карты в конце.`
+Дай только итоговый доработанный результат.`
           }]
         })
       });
       const data = await resp.json();
       if (data.error) throw new Error(data.error.message);
       const text = data.content?.[0]?.text || "";
-      if (!text) throw new Error("empty");
+      if (!text) throw new Error("Пустой ответ");
       setAiResult(text);
       setAssistantEdit(text);
       setReviewNote("");
@@ -774,6 +812,7 @@ ${reviewNote}
     setAssistantEdit("");
     setShowEdit(false);
     setAttachedFile(null);
+    setDgisInfo("");
   }
 
   if (phase === "idle") {
@@ -799,15 +838,17 @@ ${reviewNote}
         <div style={{...sf, fontSize:15, fontWeight:700, color:"#5856D6", marginBottom:4}}>
           ИИ выполняет задачу…
         </div>
-        <div style={{...sf, fontSize:13, color:g4}}>
-          Анализирую и готовлю результат с актуальными данными
+        <div style={{...sf, fontSize:13, color:g4, marginBottom:6}}>
+          Ищу актуальные данные в 2ГИС и готовлю результат
+        </div>
+        <div style={{...sf, fontSize:11, color:"#00B956", fontWeight:600}}>
+          📍 2ГИС — реальные адреса и телефоны
         </div>
       </div>
     );
   }
 
   if (phase === "reviewing") {
-    const maps = getMapsLinks(task.title);
     return (
       <div style={{marginBottom:8}}>
         <div style={{background:"linear-gradient(135deg,rgba(88,86,214,0.09),rgba(0,122,255,0.04))",
@@ -816,7 +857,9 @@ ${reviewNote}
           <span style={{fontSize:20}}>🤖</span>
           <div style={{flex:1}}>
             <div style={{...sf, fontSize:13, fontWeight:700, color:"#5856D6"}}>ИИ выполнил задачу</div>
-            <div style={{...sf, fontSize:11, color:g4}}>Проверьте — примите или доработайте</div>
+            <div style={{...sf, fontSize:11, color:"#00B956", fontWeight:600}}>
+              📍 Данные из 2ГИС
+            </div>
           </div>
         </div>
 
@@ -835,29 +878,6 @@ ${reviewNote}
               {aiResult}
             </div>
           )}
-        </div>
-
-        <div style={{background:WH, border:"1.5px solid rgba(88,86,214,0.15)",
-          borderTop:`0.5px solid ${SEP}`, padding:"12px 16px"}}>
-          <div style={{...sf, fontSize:11, color:g4, fontWeight:600,
-            textTransform:"uppercase", letterSpacing:0.4, marginBottom:8}}>
-            🗺 Проверить на картах
-          </div>
-          <div style={{display:"flex", gap:6, flexWrap:"wrap"}}>
-            {[
-              {label:"Яндекс", url:maps.yandex, color:"#FC3F1D"},
-              {label:"2ГИС", url:maps.gis, color:"#00B956"},
-              {label:"Google Maps", url:maps.google, color:"#4285F4"},
-            ].map(m => (
-              <a key={m.label} href={m.url} target="_blank" rel="noreferrer"
-                style={{...sf, flex:1, minWidth:80, display:"block", textAlign:"center",
-                  background:`${m.color}12`, border:`1.5px solid ${m.color}40`,
-                  borderRadius:10, padding:"8px 10px", fontSize:12,
-                  fontWeight:700, color:m.color, textDecoration:"none"}}>
-                📍 {m.label}
-              </a>
-            ))}
-          </div>
         </div>
 
         <div style={{background:WH, border:"1.5px solid rgba(88,86,214,0.15)",
