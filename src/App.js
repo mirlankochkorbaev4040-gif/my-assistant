@@ -641,50 +641,7 @@ function ChatBlock({messages, setMessages, mgrId, myRole, peer, onSend}) {
  );
 }
 // ── AI ВЫПОЛНЕНИЕ ЗАДАЧИ ──────────────────────────────────────────────────────
-const DGIS_KEY = "18c514b9-3f3a-45d9-9093-985ab0c1eb45";
-// Поиск реальных мест через 2ГИС API
-async function searchDgis(query, city) {
-  try {
-    const q = encodeURIComponent(`${query} ${city}`);
-    const url = `https://catalog.api.2gis.com/3.0/items?q=${q}&fields=items.point,items.address,items.contact_groups,items.rubrics,items.name_ex&key=${DGIS_KEY}&page_size=5&locale=ru_KZ`;
-    const resp = await fetch(url);
-    const data = await resp.json();
-    if (!data.result?.items?.length) return null;
-    return data.result.items.map(item => {
-      const phones = item.contact_groups?.[0]?.contacts?.filter(c => c.type === "phone").map(c => c.value).join(", ") || "телефон не указан";
-      const addr = item.address_name || item.address?.components?.map(c => c.street_with_type + (c.number ? " " + c.number : "")).filter(Boolean).join(", ") || "адрес уточнить";
-      return `• ${item.name_ex?.primary || item.name || "—"}
-  📍 ${addr}
-  📞 ${phones}`;
-    }).join("\n");
-  } catch(e) {
-    console.error("2GIS error:", e);
-    return null;
-  }
-}
-// Определяем город через ИИ — понимает любой город мира, любой язык, сокращения
-async function detectCityAI(text) {
-  try {
-    const resp = await fetch("/api/claude", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 50,
-        messages: [{
-          role: "user",
-          content: `Из текста задачи определи город где нужно искать. Если города нет — напиши "Алматы".\nОтветь ТОЛЬКО названием города на русском языке, без лишних слов.\nТекст: "${text}"`
-        }]
-      })
-    });
-    const data = await resp.json();
-    const city = (data.content?.[0]?.text || "").trim().replace(/[.,"']/g, "");
-    return city || "Алматы";
-  } catch(e) {
-    console.error("detectCityAI error:", e);
-    return "Алматы";
-  }
-}
+// ── AI ВЫПОЛНЕНИЕ ЗАДАЧИ — Claude ищет актуальные данные через web_search ─────
 function AiExecute({ task, onResult }) {
   const [phase, setPhase] = useState("idle");
   const [aiResult, setAiResult] = useState("");
@@ -693,23 +650,10 @@ function AiExecute({ task, onResult }) {
   const [showEdit, setShowEdit] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [attachedFile, setAttachedFile] = useState(null);
-  const [dgisInfo, setDgisInfo] = useState("");
   const today = new Date().toLocaleDateString("ru-RU", {year:"numeric",month:"long",day:"numeric"});
   async function executeTask() {
     setPhase("executing");
     setAiResult("");
-    setDgisInfo("");
-    // ИИ определяет город из задачи — работает с любым городом мира
-    const city = await detectCityAI((task.title || "") + " " + (task.desc || ""));
-    const dgisResults = await searchDgis(task.title, city);
-    if (dgisResults) setDgisInfo(dgisResults);
-    const dgisBlock = dgisResults
-      ? `
-АКТУАЛЬНЫЕ ДАННЫЕ ИЗ 2ГИС (${city}):
-${dgisResults}
-Используй эти реальные данные в своём ответе.`
-      : `
-(Поиск в 2ГИС не дал результатов. Используй свои знания, но отмечай неточные данные пометкой "(уточнить)")`;
     try {
       const resp = await fetch("/api/claude", {
         method: "POST",
@@ -717,24 +661,24 @@ ${dgisResults}
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
           max_tokens: 2000,
+          tools: [{ type: "web_search_20250305", name: "web_search" }],
           messages: [{
             role: "user",
-            content: `Сегодня ${today}. Ты — профессиональный бизнес-ассистент руководителя казахстанской компании.
+            content: `Сегодня ${today}. Ты — профессиональный бизнес-ассистент руководителя. У тебя есть доступ к поиску в интернете — используй его чтобы найти актуальную информацию.
 
 ЗАДАЧА: ${task.title}
 ОПИСАНИЕ: ${task.desc || "не указано"}
 ОЖИДАЕМЫЙ РЕЗУЛЬТАТ: ${task.er || "не указан"}
-ГОРОД: ${city}
-${dgisBlock}
 
 ═══════════════════════════════════════
-КАК ОПРЕДЕЛИТЬ ТИП ЗАДАЧИ И КАК ВЫПОЛНИТЬ:
+КАК ВЫПОЛНИТЬ ЗАДАЧУ:
 ═══════════════════════════════════════
 
-🔍 ПОИСК / НАЙТИ МЕСТО / ОРГАНИЗАЦИЮ
-→ Используй данные из 2ГИС как основу
+🔍 ПОИСК / НАЙТИ МЕСТО / ОРГАНИЗАЦИЮ / АДРЕС
+→ ОБЯЗАТЕЛЬНО используй web_search для поиска актуальных данных
+→ Ищи точное название, адрес, телефон, сайт, режим работы
+→ Дай 3-5 реальных вариантов с конкретными данными
 → Формат: Название | Адрес | Телефон | Режим работы
-→ Дай 3-5 вариантов с кратким описанием каждого
 
 📝 НАПИСАТЬ ТЕКСТ / ПИСЬМО / СООБЩЕНИЕ
 → Сразу пиши готовый текст без вступлений
@@ -748,35 +692,35 @@ ${dgisBlock}
 → Дай готовые варианты текста для звонка/сообщения
 
 📊 АНАЛИЗ / СРАВНЕНИЕ / ИССЛЕДОВАНИЕ
-→ Структурируй данные: таблица или чёткий список
+→ Используй web_search для актуальных данных
+→ Структурируй: таблица или чёткий список
 → Дай вывод: что лучше и почему
-→ Конкретные цифры и факты, не общие слова
 
 🛒 КУПИТЬ / ЗАКАЗАТЬ / ПОДОБРАТЬ
-→ Конкретные варианты с ценами (если известны)
-→ Ссылки или адреса где купить
+→ Используй web_search для актуальных цен и наличия
+→ Конкретные варианты с ценами и где купить
 → Рекомендация: что выбрать и почему
 
 📋 ЛЮБАЯ ДРУГАЯ ЗАДАЧА
-→ Разбей на шаги
-→ Дай готовый конкретный результат
-→ Не вступления — сразу результат
+→ Если нужна актуальная информация — используй web_search
+→ Дай готовый конкретный результат без вступлений
 
 ═══════════════════════════════════════
 ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА:
 ═══════════════════════════════════════
-1. Отвечай на том же языке что задача (русский / казахский / оба)
-2. Никаких вводных фраз — сразу результат
-3. Не выдумывай адреса и телефоны — только подтверждённые данные
-4. Если данных не хватает — пометь "(уточнить)"
+1. Для поиска мест/адресов/телефонов — ВСЕГДА используй web_search
+2. Отвечай на том же языке что задача (русский / казахский / оба)
+3. Никаких вводных фраз — сразу результат
+4. Только реальные данные из поиска — не выдумывай адреса и телефоны
 5. Структурированно: заголовки, списки, разделители
-6. Будь конкретным: не "можно найти хорошие варианты", а сами варианты`
+6. Будь конкретным: не "можно найти варианты", а сами варианты`
           }]
         })
       });
       const data = await resp.json();
       if (data.error) throw new Error(data.error.message || "API error");
-      const text = data.content?.[0]?.text || "";
+      // web_search возвращает несколько блоков — берём текстовый
+      const text = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n") || "";
       if (!text) throw new Error("Пустой ответ от сервера");
       setAiResult(text);
       setAssistantEdit(text);
@@ -804,7 +748,6 @@ ${dgisBlock}
 ЗАДАЧА: ${task.title}
 ОПИСАНИЕ: ${task.desc || "не указано"}
 ОЖИДАЕМЫЙ РЕЗУЛЬТАТ: ${task.er || "не указан"}
-${dgisInfo ? `Данные из 2ГИС:\n${dgisInfo}\n` : ""}
 ПРЕДЫДУЩИЙ РЕЗУЛЬТАТ:
 ${aiResult}
 
@@ -851,7 +794,6 @@ ${reviewNote}
     setAssistantEdit("");
     setShowEdit(false);
     setAttachedFile(null);
-    setDgisInfo("");
   }
   if (phase === "idle") {
     return (
@@ -876,10 +818,10 @@ ${reviewNote}
           ИИ выполняет задачу…
         </div>
         <div style={{...sf, fontSize:13, color:g4, marginBottom:6}}>
-          Ищу актуальные данные в 2ГИС и готовлю результат
+          Ищу актуальные данные в интернете и готовлю результат
         </div>
         <div style={{...sf, fontSize:11, color:"#00B956", fontWeight:600}}>
-          📍 2ГИС — реальные адреса и телефоны
+          🌐 Поиск актуальных данных по всему миру
         </div>
       </div>
     );
@@ -894,7 +836,7 @@ ${reviewNote}
           <div style={{flex:1}}>
             <div style={{...sf, fontSize:13, fontWeight:700, color:"#5856D6"}}>ИИ выполнил задачу</div>
             <div style={{...sf, fontSize:11, color:"#00B956", fontWeight:600}}>
-              📍 Данные из 2ГИС
+              🌐 Актуальные данные из интернета
             </div>
           </div>
         </div>
