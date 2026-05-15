@@ -548,21 +548,67 @@ function ProfileBlock({mgr, setUsers, canEdit, isNewAssistant, onAcknowledge}) {
 }
 // ── ЧАТ ───────────────────────────────────────────────────────────────────────
 function ChatBlock({messages, setMessages, mgrId, myRole, peer, onSend}) {
- const [text,     setText]    = useState("");
- const [attached, setAttached]= useState(null);
+ const [text,        setText]       = useState("");
+ const [attached,    setAttached]   = useState(null); // {name, url, type}
+ const [audioBlob,   setAudioBlob]  = useState(null); // записанное аудио
+ const [audioURL,    setAudioURL]   = useState(null); // превью
+ const [recording,   setRecording]  = useState(false);
+ const [audioReady,  setAudioReady] = useState(false); // готово к отправке
+ const mediaRef  = useRef(null);
+ const chunksRef = useRef([]);
+ const fileRef   = useRef(null);
  const list = messages[mgrId] || [];
+ // ── Файл / фото ──────────────────────────────────────────────────────────
+ function pickFile() { fileRef.current && fileRef.current.click(); }
+ function onFileChange(e) {
+   const f = e.target.files?.[0];
+   if (!f) return;
+   const url = URL.createObjectURL(f);
+   setAttached({name: f.name, url, type: f.type});
+   setAudioBlob(null); setAudioURL(null); setAudioReady(false);
+   e.target.value = "";
+ }
+ // ── Аудио ────────────────────────────────────────────────────────────────
+ async function startRecord() {
+   try {
+     const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+     chunksRef.current = [];
+     const mr = new MediaRecorder(stream);
+     mediaRef.current = mr;
+     mr.ondataavailable = e => chunksRef.current.push(e.data);
+     mr.onstop = () => {
+       const blob = new Blob(chunksRef.current, {type:"audio/webm"});
+       const url  = URL.createObjectURL(blob);
+       setAudioBlob(blob); setAudioURL(url); setAudioReady(true);
+       stream.getTracks().forEach(t=>t.stop());
+     };
+     mr.start();
+     setRecording(true);
+   } catch { alert("Нет доступа к микрофону"); }
+ }
+ function stopRecord() {
+   mediaRef.current?.stop();
+   setRecording(false);
+ }
+ function cancelAudio() {
+   setAudioBlob(null); setAudioURL(null); setAudioReady(false);
+ }
+ // ── Отправка ─────────────────────────────────────────────────────────────
  function send() {
-   if (!text.trim() && !attached) return;
+   if (!text.trim() && !attached && !audioBlob) return;
+   const files = [];
+   if (attached)  files.push({name: attached.name, url: attached.url, type: attached.type});
+   if (audioBlob) files.push({name: "Голосовое сообщение", url: audioURL, type: "audio/webm", isAudio: true});
    const msg = {
      id: genId(),
      from: myRole,
      text,
      time: new Date().toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"}),
-     files: attached ? [{name:attached}] : [],
+     files,
    };
    setMessages(p => ({...p, [mgrId]: [...(p[mgrId]||[]), msg]}));
-   if (onSend) onSend(); // уведомить ассистента о новом сообщении
-   setText(""); setAttached(null);
+   if (onSend) onSend();
+   setText(""); setAttached(null); setAudioBlob(null); setAudioURL(null); setAudioReady(false);
  }
  return (
    <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
@@ -604,22 +650,59 @@ function ChatBlock({messages, setMessages, mgrId, myRole, peer, onSend}) {
          );
        })}
      </div>
-     {/* Прикреплённый файл */}
+     {/* Скрытый input для файла */}
+     <input ref={fileRef} type="file" accept=".pdf,.docx,.xlsx,.jpg,.jpeg,.png" style={{display:"none"}} onChange={onFileChange}/>
+     {/* Превью прикреплённого файла */}
      {attached && (
        <div style={{padding:"5px 14px",display:"flex",alignItems:"center",gap:8,
          background:WH,borderTop:`0.5px solid ${SEP}`}}>
-         <span style={{...sf,background:g1,borderRadius:8,padding:"4px 10px",fontSize:12,color:B}}>📎 {attached}</span>
+         {attached.type && attached.type.startsWith("image") ? (
+           <img src={attached.url} alt="preview" style={{height:40,borderRadius:8,objectFit:"cover"}}/>
+         ) : (
+           <span style={{...sf,background:g1,borderRadius:8,padding:"4px 10px",fontSize:12,color:B}}>📎 {attached.name}</span>
+         )}
          <button onClick={()=>setAttached(null)}
            style={{background:"none",border:"none",cursor:"pointer",color:g4,fontSize:16}}>✕</button>
        </div>
      )}
+     {/* Превью аудио (готово к отправке) */}
+     {audioReady && audioURL && (
+       <div style={{padding:"6px 14px",display:"flex",alignItems:"center",gap:8,
+         background:WH,borderTop:`0.5px solid ${SEP}`}}>
+         <audio src={audioURL} controls style={{height:32,flex:1}}/>
+         <button onClick={cancelAudio}
+           style={{background:"none",border:"none",cursor:"pointer",color:g4,fontSize:16}}>✕</button>
+       </div>
+     )}
+     {/* Индикатор записи */}
+     {recording && (
+       <div style={{padding:"6px 14px",display:"flex",alignItems:"center",gap:8,
+         background:"rgba(255,59,48,0.07)",borderTop:`0.5px solid ${SEP}`}}>
+         <span style={{width:10,height:10,borderRadius:"50%",background:R,animation:"pulse 1s infinite",flexShrink:0}}/>
+         <span style={{...sf,fontSize:13,color:R,flex:1}}>Запись идёт…</span>
+         <button onClick={stopRecord}
+           style={{...sf,background:R,color:"#fff",border:"none",borderRadius:10,
+             padding:"4px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+           ⏹ Стоп
+         </button>
+       </div>
+     )}
      {/* Ввод */}
      <div style={{display:"flex",gap:8,padding:"10px 14px 14px",
-       background:WH,borderTop:`0.5px solid ${SEP}`,flexShrink:0}}>
-       <button onClick={()=>setAttached("файл.pdf")}
+       background:WH,borderTop:`0.5px solid ${SEP}`,flexShrink:0,alignItems:"flex-end"}}>
+       {/* Кнопка файла */}
+       <button onClick={pickFile}
          style={{width:40,height:40,background:g1,border:"none",borderRadius:12,
            cursor:"pointer",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
          📎
+       </button>
+       {/* Кнопка аудио */}
+       <button onClick={recording ? stopRecord : startRecord}
+         style={{width:40,height:40,background:recording?"rgba(255,59,48,0.15)":g1,
+           border:recording?`1.5px solid ${R}`:"1.5px solid transparent",
+           borderRadius:12,cursor:"pointer",fontSize:18,
+           display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+         🎙
        </button>
        <textarea
          value={text}
@@ -665,46 +748,37 @@ function AiExecute({ task, onResult }) {
           messages: [{
             role: "user",
             content: `Сегодня ${today}. Ты — профессиональный бизнес-ассистент руководителя. У тебя есть доступ к поиску в интернете — используй его чтобы найти актуальную информацию.
-
 ЗАДАЧА: ${task.title}
 ОПИСАНИЕ: ${task.desc || "не указано"}
 ОЖИДАЕМЫЙ РЕЗУЛЬТАТ: ${task.er || "не указан"}
-
 ═══════════════════════════════════════
 КАК ВЫПОЛНИТЬ ЗАДАЧУ:
 ═══════════════════════════════════════
-
 🔍 ПОИСК / НАЙТИ МЕСТО / ОРГАНИЗАЦИЮ / АДРЕС
 → ОБЯЗАТЕЛЬНО используй web_search для поиска актуальных данных
 → Ищи точное название, адрес, телефон, сайт, режим работы
 → Дай 3-5 реальных вариантов с конкретными данными
 → Формат: Название | Адрес | Телефон | Режим работы
-
 📝 НАПИСАТЬ ТЕКСТ / ПИСЬМО / СООБЩЕНИЕ
 → Сразу пиши готовый текст без вступлений
 → Деловой стиль, уважительный тон
 → Язык такой же как в задаче (русский или казахский)
 → В конце: [ГОТОВО К ОТПРАВКЕ]
-
 📅 ОРГАНИЗОВАТЬ / ДОГОВОРИТЬСЯ / ВСТРЕЧА
 → Предложи конкретный план действий по шагам
 → Укажи что нужно уточнить у руководителя
 → Дай готовые варианты текста для звонка/сообщения
-
 📊 АНАЛИЗ / СРАВНЕНИЕ / ИССЛЕДОВАНИЕ
 → Используй web_search для актуальных данных
 → Структурируй: таблица или чёткий список
 → Дай вывод: что лучше и почему
-
 🛒 КУПИТЬ / ЗАКАЗАТЬ / ПОДОБРАТЬ
 → Используй web_search для актуальных цен и наличия
 → Конкретные варианты с ценами и где купить
 → Рекомендация: что выбрать и почему
-
 📋 ЛЮБАЯ ДРУГАЯ ЗАДАЧА
 → Если нужна актуальная информация — используй web_search
 → Дай готовый конкретный результат без вступлений
-
 ═══════════════════════════════════════
 ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА:
 ═══════════════════════════════════════
@@ -744,16 +818,13 @@ function AiExecute({ task, onResult }) {
           messages: [{
             role: "user",
             content: `Сегодня ${today}. Доработай результат с учётом правок.
-
 ЗАДАЧА: ${task.title}
 ОПИСАНИЕ: ${task.desc || "не указано"}
 ОЖИДАЕМЫЙ РЕЗУЛЬТАТ: ${task.er || "не указан"}
 ПРЕДЫДУЩИЙ РЕЗУЛЬТАТ:
 ${aiResult}
-
 ПРАВКИ ОТ АССИСТЕНТА:
 ${reviewNote}
-
 ═══════════════════════════════════════
 ПРАВИЛА ДОРАБОТКИ:
 ═══════════════════════════════════════
@@ -951,8 +1022,6 @@ function AiCheck({task, onDone}) {
  const [result,   setResult]   = useState(task.result||"");
  const [checking, setChecking] = useState(false);
  const [review,   setReview]   = useState(null);
- const [aiPlan,   setAiPlan]   = useState(null);
- const [planLoading, setPlanLoading] = useState(false);
  // Синхронизируем result с task.result при изменении задачи
  useEffect(() => { setResult(task.result||""); }, [task.result]);
  // Автосохранение с debounce 800мс
@@ -964,34 +1033,6 @@ function AiCheck({task, onDone}) {
    }, 800);
    return () => clearTimeout(timeout);
  }, [result]);
- async function loadPlan() {
-   if (aiPlan) return;
-   setPlanLoading(true);
-   try {
-     const resp = await fetch("/api/claude", {
-       method: "POST",
-       headers: {"Content-Type":"application/json"},
-       body: JSON.stringify({
-         model: "claude-sonnet-4-20250514",
-         max_tokens: 1000,
-         messages: [{role:"user", content:
-           `Ты опытный бизнес-ассистент казахстанской компании. Составь краткий план выполнения задачи для ассистента руководителя.
-
-Задача: ${task.title}
-Описание: ${task.desc}
-Ожидаемый результат: ${task.er}
-
-Ответь ТОЛЬКО JSON (без markdown):
-{"steps":[{"n":1,"text":"конкретный шаг","time":"5 мин"}],"warning":"главная ошибка которую надо избежать","tip":"главный совет для успешного выполнения"}`
-         }]
-       })
-     });
-     const data = await resp.json();
-     const text = (data.content?.[0]?.text||"").replace(/```json|```/g,"").trim();
-     setAiPlan(JSON.parse(text));
-   } catch(e) { setAiPlan({steps:[],warning:"",tip:"Не удалось загрузить план"}) }
-   setPlanLoading(false);
- }
  async function checkWithAI() {
    if (!result.trim()) return;
    setChecking(true); setReview(null);
@@ -1004,14 +1045,11 @@ function AiCheck({task, onDone}) {
          max_tokens: 1000,
          messages: [{role:"user", content:
            `Ты строгий но справедливый проверяющий качества работы ассистента казахстанской компании.
-
 Задача: ${task.title}
 Описание: ${task.desc}
 Ожидаемый результат: ${task.er}
-
 Результат ассистента:
 ${result}
-
 ═══════════════════════════════════════
 КРИТЕРИИ ПРОВЕРКИ:
 ═══════════════════════════════════════
@@ -1021,7 +1059,6 @@ ${result}
 ✅ Структура понятная (легко читать)
 ✅ Нет выдуманных данных (адреса, телефоны подтверждены)
 ✅ Соответствует ожидаемому результату
-
 Проверь качество и ответь ТОЛЬКО JSON (без markdown):
 {"score":число 0-100,"verdict":"отлично"|"хорошо"|"частично"|"плохо","summary":"один конкретный вывод о качестве","checks":[{"label":"что проверялось","ok":true,"comment":"пояснение"}],"recommendation":"конкретно что доделать или исправить, или пустая строка если всё хорошо"}`
          }]
@@ -1045,49 +1082,6 @@ ${result}
  const vc = review ? (VC[review.verdict]||VC.ошибка) : null;
  return (
    <div style={{marginBottom:10}}>
-     {/* AI План */}
-     {!aiPlan && !planLoading && (
-       <button onClick={loadPlan}
-         style={{...sf,width:"100%",background:"rgba(0,122,255,0.08)",
-           border:"1.5px solid rgba(0,122,255,0.2)",borderRadius:12,padding:"11px",
-           fontSize:14,color:B,fontWeight:600,cursor:"pointer",marginBottom:8}}>
-         🧠 Получить AI план выполнения
-       </button>
-     )}
-     {planLoading && (
-       <div style={{...sf,fontSize:13,color:g4,textAlign:"center",padding:"10px 0",marginBottom:8}}>
-         🧠 AI составляет план…
-       </div>
-     )}
-     {aiPlan && (
-       <div style={{background:"rgba(0,122,255,0.04)",border:"1.5px solid rgba(0,122,255,0.15)",
-         borderRadius:14,padding:"12px 14px",marginBottom:10}}>
-         <div style={{...sf,fontSize:12,color:B,fontWeight:700,marginBottom:8}}>🧠 AI ПЛАН ВЫПОЛНЕНИЯ</div>
-         {aiPlan.steps.map((s,i)=>(
-           <div key={i} style={{display:"flex",gap:8,marginBottom:6}}>
-             <div style={{width:22,height:22,borderRadius:6,background:B,color:"#fff",
-               display:"flex",alignItems:"center",justifyContent:"center",
-               fontSize:11,fontWeight:700,flexShrink:0}}>{s.n}</div>
-             <div style={{flex:1}}>
-               <div style={{...sf,fontSize:13,color:"#1c1c1e"}}>{s.text}</div>
-               <div style={{...sf,fontSize:11,color:g4}}>{s.time}</div>
-             </div>
-           </div>
-         ))}
-         {aiPlan.warning && (
-           <div style={{background:"rgba(255,59,48,0.07)",borderRadius:10,padding:"8px 10px",marginTop:8}}>
-             <span style={{...sf,fontSize:12,color:R,fontWeight:600}}>⚠️ Избегать: </span>
-             <span style={{...sf,fontSize:12,color:"#3c3c43"}}>{aiPlan.warning}</span>
-           </div>
-         )}
-         {aiPlan.tip && (
-           <div style={{background:"rgba(52,199,89,0.07)",borderRadius:10,padding:"8px 10px",marginTop:6}}>
-             <span style={{...sf,fontSize:12,color:G,fontWeight:600}}>💡 Совет: </span>
-             <span style={{...sf,fontSize:12,color:"#3c3c43"}}>{aiPlan.tip}</span>
-           </div>
-         )}
-       </div>
-     )}
      {/* Результат */}
      <div style={{...sf,fontSize:11,color:g4,fontWeight:600,
        textTransform:"uppercase",letterSpacing:0.4,marginBottom:6}}>
@@ -1292,12 +1286,12 @@ function TasksBlock({tasks, setTasks, saveTask, updateTask, mgrId, myRole, onNew
  const [confirmDelete, setConfirmDelete] = useState(null);
  const list = tasks[mgrId] || [];
  const counts = {
-   all:        list.filter(t=>t.status!=="done").length,
+   all:        list.filter(t=>t.status==="new").length,
    in_progress:list.filter(t=>t.status==="in_progress").length,
    problem:    list.filter(t=>t.status==="problem").length,
    done:       list.filter(t=>t.status==="done").length,
  };
- const shown = filter==="all"  ? list.filter(t=>t.status!=="done")
+ const shown = filter==="all"  ? list.filter(t=>t.status==="new")
              : filter==="done" ? list.filter(t=>t.status==="done")
              : list.filter(t=>t.status===filter);
  function upd(id, patch) {
@@ -1346,8 +1340,8 @@ function TasksBlock({tasks, setTasks, saveTask, updateTask, mgrId, myRole, onNew
          </button>
        ))}
      </div>
-     {/* Кнопка добавить (только руководитель) */}
-     {myRole==="manager" && (
+     {/* Кнопка добавить (только руководитель, только вкладка "Активные") */}
+     {myRole==="manager" && filter==="all" && (
        <button onClick={()=>setAdding(true)}
          style={{...sf,background:B,color:"#fff",border:"none",borderRadius:14,
            padding:"13px",fontSize:16,fontWeight:600,cursor:"pointer",width:"100%",
@@ -1642,13 +1636,6 @@ function TasksBlock({tasks, setTasks, saveTask, updateTask, mgrId, myRole, onNew
                  padding:"11px 13px",fontSize:15,outline:"none",boxSizing:"border-box"}}/>
            </div>
          ))}
-         <div style={{marginBottom:10}}>
-           <div style={{...sf,fontSize:11,color:g4,fontWeight:600,textTransform:"uppercase",marginBottom:5}}>Детали</div>
-           <textarea value={form.desc} onChange={e=>setForm({...form,desc:e.target.value})}
-             placeholder="Дополнительная информация…" rows={2}
-             style={{...sf,width:"100%",background:g1,border:"none",borderRadius:10,
-               padding:"11px 13px",fontSize:14,outline:"none",resize:"none",boxSizing:"border-box"}}/>
-         </div>
          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
            <div>
              <div style={{...sf,fontSize:11,color:g4,fontWeight:600,textTransform:"uppercase",marginBottom:5}}>Дедлайн *</div>
@@ -1695,6 +1682,22 @@ function TasksBlock({tasks, setTasks, saveTask, updateTask, mgrId, myRole, onNew
                  ✕
                </button>
              )}
+             {/* Кнопка прикрепить документ */}
+             <label style={{...sf,flex:1,background:form.docFile?"rgba(52,199,89,0.08)":g1,
+               border:`1.5px solid ${form.docFile?G:"transparent"}`,
+               borderRadius:10,padding:"9px",cursor:"pointer",fontSize:13,
+               color:form.docFile?G:g4,fontWeight:600,textAlign:"center",display:"block"}}>
+               {form.docFile?`✅ ${form.docFile.name}`:"📎 Файл"}
+               <input type="file" accept=".pdf,.docx,.xlsx,.jpg,.jpeg,.png" style={{display:"none"}}
+                 onChange={e=>{const f=e.target.files[0];if(f)setForm(prev=>({...prev,docFile:f}));e.target.value="";}}/>
+             </label>
+             {form.docFile && (
+               <button onClick={()=>setForm(f=>({...f,docFile:null}))}
+                 style={{...sf,background:"rgba(255,59,48,0.08)",border:"none",
+                   borderRadius:10,padding:"9px 12px",fontSize:13,color:R,cursor:"pointer",fontWeight:600}}>
+                 ✕
+               </button>
+             )}
            </div>
            {form.photo && (
              <img src={form.photo} alt="preview"
@@ -1726,8 +1729,32 @@ function TasksBlock({tasks, setTasks, saveTask, updateTask, mgrId, myRole, onNew
  );
 }
 // ── ИТОГИ НЕДЕЛИ ─────────────────────────────────────────────────────────────
-function WeeklyReport({tasks, weekSaved, mgrName}) {
- const [sent, setSent] = useState(false);
+function WeeklyReport({tasks, weekSaved, mgrName, mgrId}) {
+ // Ключ: год + номер недели + mgrId → храним в localStorage как запасной, основа — Supabase
+ function getWeekKey() {
+   const now = new Date();
+   const d = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+   d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+   const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+   return `weekly_${mgrId}_${d.getUTCFullYear()}_w${weekNo}`;
+ }
+ const weekKey = getWeekKey();
+ const [sent, setSent] = useState(() => {
+   try { return !!localStorage.getItem(weekKey); } catch { return false; }
+ });
+ async function doSend() {
+   setSent(true);
+   try { localStorage.setItem(weekKey, "1"); } catch {}
+   // Сохраняем в Supabase
+   try {
+     await fetch(`${SUPA_URL}/rest/v1/weekly_sent`, {
+       method: "POST",
+       headers: { ...headers, "Prefer": "resolution=merge-duplicates,return=representation" },
+       body: JSON.stringify({ id: weekKey, mgr_id: mgrId, sent_at: new Date().toISOString() }),
+     });
+   } catch {}
+ }
  const hrs  = Math.floor(weekSaved/60);
  const mins = weekSaved % 60;
  const savedStr = weekSaved===0 ? "" : hrs>0 ? `${hrs} ч ${mins>0?mins+" мин":""}` : `${mins} мин`;
@@ -1780,7 +1807,7 @@ function WeeklyReport({tasks, weekSaved, mgrName}) {
          </div>
        )}
        {/* Кнопка отправить клиенту */}
-       <button onClick={()=>setSent(true)}
+       <button onClick={doSend}
          style={{...sf,background:G,color:"#fff",border:"none",borderRadius:14,
            padding:"13px",fontSize:15,fontWeight:600,cursor:"pointer",width:"100%",
            marginTop:12,boxShadow:"0 4px 14px rgba(52,199,89,0.35)"}}>
@@ -3446,7 +3473,7 @@ function AssistantView({user,onLogout}) {
                  <div style={{...csf,fontSize:11,color:C.gray}}>до {fmtD(t.deadline)}</div>
                </div>
                {t.status==="new"&&<Btn style={{marginTop:10,padding:"9px"}}>Взять в работу</Btn>}
-               {t.status==="active"&&<div style={{display:"flex",gap:8,marginTop:10}}><Btn style={{padding:"9px"}}>🤖 AI план</Btn><Btn variant="secondary" style={{padding:"9px"}}>Сдать</Btn></div>}
+               {t.status==="active"&&<div style={{display:"flex",gap:8,marginTop:10}}><Btn variant="secondary" style={{padding:"9px"}}>Сдать</Btn></div>}
              </Card>
            );
          })}
@@ -3547,6 +3574,15 @@ export default function App() {
    setAcknowledged(prev => {
      const next = typeof fn === "function" ? fn(prev) : fn;
      try { localStorage.setItem("ma_ack", JSON.stringify(next)); } catch {}
+     // Сохраняем в Supabase для надёжности (таблица mgr_profile_seen)
+     const newKeys = Object.keys(next).filter(k => !prev[k]);
+     newKeys.forEach(mgrId => {
+       fetch(`${SUPA_URL}/rest/v1/mgr_profile_seen`, {
+         method: "POST",
+         headers: { ...headers, "Prefer": "resolution=merge-duplicates,return=representation" },
+         body: JSON.stringify({ id: `${me?.id}_${mgrId}`, ast_id: me?.id, mgr_id: mgrId, seen_at: new Date().toISOString() }),
+       }).catch(()=>{});
+     });
      return next;
    });
  };
@@ -4019,7 +4055,19 @@ export default function App() {
                          </div>
                      }
                      <div style={{...sf,fontSize:13,color:"rgba(255,255,255,0.6)"}}>
-                       за всё время · {doneCnt} задач выполнено
+                       за всё время
+                     </div>
+                   </div>
+                   {/* Блок: количество выполненных задач */}
+                   <div style={{background:WH,borderRadius:18,padding:"14px 16px",marginBottom:14,
+                     boxShadow:"0 1px 8px rgba(0,0,0,0.06)",display:"flex",alignItems:"center",gap:14}}>
+                     <div style={{width:44,height:44,borderRadius:14,background:`${G}18`,
+                       display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>
+                       ✅
+                     </div>
+                     <div>
+                       <div style={{...sf,fontSize:26,fontWeight:800,color:G,letterSpacing:-1}}>{doneCnt}</div>
+                       <div style={{...sf,fontSize:12,color:g4}}>задач выполнено за всё время</div>
                      </div>
                    </div>
                    <div style={{background:WH,borderRadius:18,padding:"14px 16px",marginBottom:14,
@@ -4106,7 +4154,7 @@ export default function App() {
                const weekTasks = mgrTasks.filter(t=>t.status==="done").slice(-5);
                const weekSaved = weekTasks.reduce((s,t)=>s+(t.saved||0),0);
                return weekTasks.length > 0
-                 ? <WeeklyReport tasks={weekTasks} weekSaved={weekSaved} mgrName={activeMgrObj?.name||""}/>
+                 ? <WeeklyReport tasks={weekTasks} weekSaved={weekSaved} mgrName={activeMgrObj?.name||""} mgrId={activeMgrId}/>
                  : null;
              })()}
              {/* Уведомление ассистенту: руководитель ответил */}
