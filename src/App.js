@@ -3733,6 +3733,7 @@ finally {
 lastSaved.current = Date.now();
 isSaving.current = false;
 }
+} // end saveUsersBatch
 async function deleteUserFromDb(id) {
 try { await db.delete("users", id); loadAll(); }
 catch(e) { console.error(e); }
@@ -3909,6 +3910,7 @@ if (!eList.find(n => n.id === e.id)) toDel.push(e.id);
 });
 if (toSave.length > 0) setTimeout(() => toSave.forEach(([mgrId, e]) => saveEventToDb(mgrId, e)), 0);
 if (toDel.length > 0) setTimeout(() => toDel.forEach(id => deleteEventFromDb(id)), 0);
+});
 return next;
 });
 };
