@@ -549,7 +549,6 @@ const mediaRef = useRef(null);
 const chunksRef = useRef([]);
 const fileRef = useRef(null);
 const list = messages[mgrId] || [];
-
 function checkMic() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     alert("Ваш браузер не поддерживает запись. Используйте Chrome или Safari.");
@@ -557,16 +556,13 @@ function checkMic() {
   }
   return true;
 }
-
 function getMime() {
   for (const t of ["audio/webm","audio/mp4","audio/ogg"]) {
     if (MediaRecorder.isTypeSupported(t)) return t;
   }
   return "";
 }
-
 function pickFile() { fileRef.current && fileRef.current.click(); }
-
 function onFileChange(e) {
   const f = e.target.files?.[0];
   if (!f) return;
@@ -575,7 +571,6 @@ function onFileChange(e) {
   reader.readAsDataURL(f);
   e.target.value = "";
 }
-
 async function startRecord() {
   if (!checkMic()) return;
   try {
@@ -608,12 +603,10 @@ async function startRecord() {
     else alert("Ошибка записи: "+(err.message||""));
   }
 }
-
 function stopRecord() {
   if (mediaRef.current && mediaRef.current.state !== "inactive") mediaRef.current.stop();
   setRecording(false);
 }
-
 async function startTaskRecord() {
   if (!checkMic()) return;
   try {
@@ -637,13 +630,11 @@ async function startTaskRecord() {
     else alert("Ошибка: "+(err.message||""));
   }
 }
-
 function stopTaskRecord() {
   if (mediaRef.current && mediaRef.current.state !== "inactive") mediaRef.current.stop();
   setTaskRec(false);
   setCreatingTask(true);
 }
-
 async function processTaskAudio(blob, mime) {
   const reader = new FileReader();
   reader.onload = async ev => {
@@ -700,7 +691,6 @@ async function processTaskAudio(blob, mime) {
   };
   reader.readAsDataURL(blob);
 }
-
 function send() {
   if (!text.trim() && !attached) return;
   const files = [];
@@ -714,7 +704,6 @@ function send() {
   if (onSend) onSend();
   setText(""); setAttached(null);
 }
-
 return (
 <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
   <div style={{padding:"10px 14px",background:WH,borderBottom:`0.5px solid ${SEP}`,display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
@@ -886,6 +875,7 @@ console.error("AiExecute error:", e);
 setAiResult("⚠️ Ошибка: " + (e.message || "проверьте соединение"));
 setPhase("reviewing");
 }
+} // end executeTask
 async function retryWithNote() {
 if (!reviewNote.trim()) return;
 setRetrying(true);
@@ -1238,6 +1228,7 @@ boxShadow:`0 4px 12px ${review.score>=70?"rgba(52,199,89,0.35)":"rgba(255,149,0,
 </button>
 </div>
 )}
+</div>
 </div>
 );
 }
@@ -2901,10 +2892,10 @@ return (
 {astList.map(a=>{
 const aExt = {
 ...a,
-clients: (asts||[]).filter(u=>u.role==="manager"&&(u.astId===aExt.id||(aExt.clients||[]).includes(u.id))).length,
+clients: (asts||[]).filter(u=>u.role==="manager"&&(u.astId===a.id||(a.clients||[]).includes(u.id))).length,
 tasksDone: 0,
-avgRating: aExt.avgRating||null,
-lastSeen: aExt.lastSeen||Date.now()-60*60000,
+avgRating: a.avgRating||null,
+lastSeen: a.lastSeen||Date.now()-60*60000,
 };
 const ls=lastSeen(aExt.lastSeen);
 const offline=Date.now()-aExt.lastSeen>2*60*60000;
@@ -3038,6 +3029,7 @@ clients:[
 clients:[
 {name:"Дмитрий",  stars:2, kpiRenewal:7500},
 ]},
+]},
 { id:"sal-2025-02", label:"Февраль 2025", payDate:"2025-03-01",
 rows:[
 { id:"a1", name:"Мария", paid:true, paidDate:"2025-03-01",
@@ -3050,6 +3042,7 @@ clients:[
 {name:"Дмитрий",  stars:3, kpiRenewal:0},
 {name:"Айдар",    stars:5, kpiRenewal:7500},
 ]},
+]},
 { id:"sal-2025-03", label:"Март 2025", payDate:"2025-04-01",
 rows:[
 { id:"a1", name:"Мария", paid:false, paidDate:null,
@@ -3061,6 +3054,7 @@ clients:[
 clients:[
 {name:"Дмитрий",  stars:0, kpiRenewal:0},
 {name:"Айдар",    stars:0, kpiRenewal:0},
+]},
 ]},
 ];
 // Считает итог по одному клиенту
@@ -3685,6 +3679,8 @@ merged[mId].push(t);
 // Сохраняем в DB снова (тихо, без блокировки)
 saveTaskToDb(mId, t).catch(() => {});
 }
+}
+});
 });
 return merged;
 });
@@ -3789,6 +3785,8 @@ return; // успех
 console.error(`saveTaskToDb attempt ${attempt} failed:`, e);
 if (attempt < 3) await new Promise(r => setTimeout(r, 1000 * attempt));
 }
+} // end for loop
+} // end saveTaskToDb
 // setTasks — чистый React setter, без async/DB
 const setTasks = fn => {
 setTasksState(prev => {
@@ -3876,6 +3874,7 @@ mList.forEach(m => {
 const old = (prev[mgrId] || []).find(p => p.id === m.id);
 if (!old) toSave.push([mgrId, m]);
 });
+});
 if (toSave.length > 0) setTimeout(() => toSave.forEach(([mgrId, m]) => saveMsgToDb(mgrId, m)), 0);
 return next;
 });
@@ -3919,6 +3918,7 @@ if (u.role==="assistant") {
 const first = (u.clients||[])[0] || null;
 setCurMgr(first); setChatMgr(first);
 }
+} // end doLogin
 function doLogout() { setMe(null); }
 // ── Экран загрузки ────────────────────────────────────────────────────────
 if (loading) {
@@ -4070,6 +4070,7 @@ display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrin
 <div style={{...sf,fontSize:26,fontWeight:800,color:G,letterSpacing:-1}}>{doneCnt}</div>
 <div style={{...sf,fontSize:12,color:g4}}>задач выполнено за всё время</div>
 </div>
+</div>
 <div style={{background:WH,borderRadius:18,padding:"14px 16px",marginBottom:14,
 boxShadow:"0 1px 8px rgba(0,0,0,0.06)"}}>
 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
@@ -4113,6 +4114,8 @@ textTransform:"uppercase",letterSpacing:0.4,marginBottom:6}}>Ближайшее 
 <div style={{flex:1}}>
 <div style={{...sf,fontSize:15,fontWeight:700}}>{nextEvent.title}</div>
 <div style={{...sf,fontSize:12,color:g4}}>{nextEvent.date} · {nextEvent.time}</div>
+</div>
+</div>
 </div>
 );
 })()}
@@ -4307,4 +4310,3 @@ borderRadius:"50%",background:R,border:`2px solid ${WH}`}}/>
 </div>
 );
 }
-
